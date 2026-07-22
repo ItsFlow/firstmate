@@ -1,4 +1,26 @@
 {
+  "permissions": {
+    "deny": [
+      "Task",
+      "Agent",
+      "Workflow",
+      "RemoteTrigger",
+      "Monitor",
+      "ScheduleWakeup",
+      "SendMessage",
+      "EnterWorktree",
+      "ExitWorktree",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskUpdate",
+      "TaskStop",
+      "TaskOutput"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -26,6 +48,15 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/bin/fm-continuity-pretool-check.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task|Workflow|Cron|Schedul|Worktree|Delegate|Spawn|Dispatch|Handoff|Remote|SendMessage|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/bin/fm-subagent-pretool-check.sh --claude"
           }
         ]
       }
