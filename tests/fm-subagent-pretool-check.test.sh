@@ -230,6 +230,23 @@ test_malformed_transport_fails_open() {
   pass "malformed, empty, and tool-name-less payloads fail open rather than blocking every tool call"
 }
 
+test_missing_jq_stdin_transport_fails_open() {
+  local fakebin="$TMP_ROOT/no-jq-bin" bash_bin cat_bin rc=0
+  bash_bin=$(command -v bash) || fail "test needs bash to simulate the hook shebang"
+  cat_bin=$(command -v cat) || fail "test needs cat to feed stdin without jq"
+  mkdir -p "$fakebin"
+  ln -sf "$bash_bin" "$fakebin/bash"
+  ln -sf "$cat_bin" "$fakebin/cat"
+  : > "$OUT"; : > "$ERR"
+  printf '%s' '{"tool_name":"Agent"}' \
+    | env PATH="$fakebin" FM_ROOT_OVERRIDE="$PRIMARY" FM_HOME="$PRIMARY" FM_STATE_OVERRIDE="$STATE" \
+      "$CHECK" --claude > "$OUT" 2> "$ERR" || rc=$?
+  [ "$rc" -eq 0 ] || fail "missing jq transport must fail open, got exit $rc: $(cat "$ERR")"
+  [ ! -s "$OUT" ] || fail "missing jq fail-open path wrote stdout: $(cat "$OUT")"
+  [ ! -s "$ERR" ] || fail "missing jq fail-open path wrote stderr: $(cat "$ERR")"
+  pass "missing jq for stdin transport fails open rather than denying every tool call"
+}
+
 test_claude_hook_registration_preserves_bash_seatbelts() {
   jq -e '
     [.hooks.PreToolUse[] | .hooks[].command]
@@ -264,4 +281,5 @@ test_task_worktree_and_non_firstmate_repo_are_inert
 test_secondmate_home_is_in_scope
 test_stdin_transports_and_output_shapes
 test_malformed_transport_fails_open
+test_missing_jq_stdin_transport_fails_open
 test_claude_hook_registration_preserves_bash_seatbelts
