@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse backstop against primary-session delegation outside the fleet.
+# PreToolUse guard against primary-session delegation outside the fleet.
 #
 # A firstmate primary that delegates through a harness's own delegation,
 # scheduling, or background-work tool creates work with no `state/<id>.meta` and
@@ -10,15 +10,17 @@
 # and it dies with the primary session instead of living in its own backend
 # session.
 #
-# THIS SCRIPT IS THE SECOND LAYER, NOT THE PRIMARY FIX. The primary fix is the
-# `permissions.deny` list in `.claude/settings.json`, which removes those tools
-# from the model's schema entirely, so there is no call to intercept at all.
-# A deny list is nonetheless fail-open against tools that do not exist yet, and
-# Claude Code's delegation surface is visibly growing. This backstop closes that
-# forward-looking gap: it matches a delegation-SHAPED tool name rather than a
-# fixed list, so a future tool that ships before anyone updates the deny list is
-# still refused. It is deliberately a pattern, because a second fixed list would
-# be a weaker duplicate of the first.
+# This script is the shipped guard.
+# Claude primaries may add a per-home local `permissions.deny` list as stronger
+# hardening because it removes tools from the model's schema entirely, but that
+# Claude-only mechanism is not tracked shared material.
+# The tracked Claude matcher is deliberately `.*`: a stem-enumerating matcher
+# would reintroduce the fail-open-by-enumeration problem this guard exists to
+# solve, because any future tool name outside the matcher would never reach this
+# script.
+# This script is therefore the single owner of classification.
+# It matches a delegation-SHAPED tool name rather than a fixed list, so a future
+# tool that ships before anyone updates local hardening is still refused.
 #
 # The guard is narrow by design. It classifies ONE thing: the shape of the tool
 # name. It makes no judgment about whether the work should be delegated at all,
@@ -49,16 +51,15 @@ set -u
 
 # Lowercase substrings that mark a tool name as delegation-shaped: it creates
 # work, an agent, a schedule, or an isolated workspace that firstmate would not
-# know about. Reviewed as one list on purpose - this and the deny list in
-# .claude/settings.json are the only two places the surface is enumerated.
+# know about. This list is the single owner of the shipped classification.
 DELEGATION_STEMS='agent subagent task workflow cron schedul worktree delegate spawn dispatch handoff remote sendmessage monitor'
 
 # Exact lowercase tool names that match a stem above but only OBSERVE or STOP
 # work that already exists. Reading or ending unaccounted work is not creating
 # it, and denying these would strand already-running work with no way to inspect
-# or end it. The captain-owned deny list in .claude/settings.json is the wider
-# layer and may still remove these from the schema; this backstop deliberately
-# stays narrower so it can never be the reason a runaway task cannot be stopped.
+# or end it. Per-home Claude hardening may still remove these from the schema;
+# this shipped guard deliberately stays narrower so it can never be the reason a
+# runaway task cannot be stopped.
 OBSERVE_ONLY_TOOLS='taskoutput taskstop taskget tasklist cronlist bashoutput killshell'
 
 TOOL=""
@@ -71,9 +72,10 @@ Usage: fm-subagent-pretool-check.sh [--tool <tool-name>] [--claude]
 
 With no --tool, reads a PreToolUse-style JSON payload on stdin (Claude/Codex
 tool_name, or Grok toolName).
-Second-layer backstop behind the permissions.deny list in .claude/settings.json:
-denies a delegation-SHAPED tool name so a future tool missing from that list is
-still refused.
+Denies a delegation-SHAPED tool name in a genuine primary home.
+Claude primaries may additionally use a per-home local permissions.deny list to
+remove known delegation tools from the model schema, but tracked shared settings
+do not ship that Claude-only mechanism.
 Fires only in a genuine firstmate primary home; it is a silent no-op in a
 crewmate/scout task worktree or any non-firstmate repo, where a worker using
 delegation tools is legitimate.

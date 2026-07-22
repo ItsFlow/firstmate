@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Behavior tests for the two-layer primary-session delegation guard: the
-# permissions.deny tool-availability list and the delegation-shape PreToolUse
-# backstop behind it.
+# Behavior tests for the primary-session delegation-shape guard: the tracked
+# hook registration, shared settings boundary, and PreToolUse classifier.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -23,11 +22,10 @@ BRIEF_ONLY_ROUTE='investigation and ship work both go to bin/fm-brief.sh then bi
 SCOUT_ROUTE='investigation or diagnosis goes to bin/fm-scout.sh "<question>" [project], and ship work goes to bin/fm-brief.sh then bin/fm-spawn.sh'
 
 # Every delegation, scheduling, worktree, and task-tracking tool Claude Code
-# 2.1.217 offers a primary session. Layer 1 must remove all of these from the
-# model's schema, so a Claude Code upgrade or a careless edit cannot silently
-# drop one. Recorded from an observed baseline tool list, see
-# docs/subagent-guard.md.
-DENIED_TOOLS='Task Agent Workflow RemoteTrigger Monitor ScheduleWakeup SendMessage EnterWorktree ExitWorktree CronCreate CronDelete CronList TaskCreate TaskGet TaskList TaskUpdate TaskStop TaskOutput'
+# 2.1.217 offered a primary session in the observed baseline.
+# The guard uses this inventory as shape-classification coverage, not as a
+# tracked deny-list contract.
+DELEGATION_TOOLS='Task Agent Workflow RemoteTrigger Monitor ScheduleWakeup SendMessage EnterWorktree ExitWorktree CronCreate CronDelete CronList TaskCreate TaskGet TaskList TaskUpdate TaskStop TaskOutput'
 
 # Tools that must stay available: denying these would break ordinary work.
 PRESERVED_TOOLS='Bash Edit Read Write Skill ToolSearch WebFetch WebSearch NotebookEdit ReportFindings DesignSync PushNotification'
@@ -63,60 +61,39 @@ expect_deny() {
 }
 
 # ---------------------------------------------------------------------------
-# Layer 1: the permissions.deny tool-availability list (the primary fix).
+# Tracked settings boundary and delegation-shape PreToolUse guard.
 # ---------------------------------------------------------------------------
 
-test_deny_list_covers_every_known_delegation_tool() {
-  local tool
-  for tool in $DENIED_TOOLS; do
-    jq -e --arg t "$tool" '.permissions.deny | index($t)' "$SETTINGS" >/dev/null \
-      || fail "permissions.deny lost the delegation tool $tool"
-  done
-  # "Task" is the historical key and "Agent" is the name the tool presents
-  # under; both are verified to work and both are pinned so neither a rename
-  # nor a rollback can reopen the surface.
-  jq -e '.permissions.deny | index("Task") and index("Agent")' "$SETTINGS" >/dev/null \
-    || fail "both the Task and Agent deny keys must stay pinned"
-  pass "permissions.deny pins every known Claude Code delegation and scheduling tool"
+test_tracked_settings_do_not_ship_permissions_deny() {
+  jq -e '(.permissions? // {} | has("deny") | not)' "$SETTINGS" >/dev/null \
+    || fail "tracked Claude settings must not ship permissions.deny"
+  pass "tracked Claude settings do not ship a permissions.deny list"
 }
 
-test_deny_list_preserves_ordinary_tools() {
+test_guard_denies_every_currently_known_delegation_tool() {
   local tool
-  for tool in $PRESERVED_TOOLS; do
-    jq -e --arg t "$tool" '.permissions.deny | index($t) | not' "$SETTINGS" >/dev/null \
-      || fail "permissions.deny must not remove the ordinary tool $tool"
-  done
-  pass "permissions.deny leaves every ordinary working tool available"
-}
-
-# ---------------------------------------------------------------------------
-# Layer 2: the delegation-shape PreToolUse backstop.
-# ---------------------------------------------------------------------------
-
-test_backstop_denies_every_currently_known_delegation_tool() {
-  local tool
-  for tool in $DENIED_TOOLS; do
+  for tool in $DELEGATION_TOOLS; do
     case "$tool" in
       TaskOutput|TaskStop|TaskGet|TaskList|CronList) continue ;;
     esac
     expect_deny "known delegation tool" "$tool"
   done
-  pass "the backstop independently denies every work-creating delegation tool by shape"
+  pass "the guard independently denies every work-creating delegation tool by shape"
 }
 
-test_backstop_denies_hypothetical_future_tools() {
-  # The whole reason this layer exists: a deny list is fail-open against tools
-  # that do not exist yet. None of these names is on any list.
+test_guard_denies_hypothetical_future_tools() {
+  # A local deny list is fail-open against tools that do not exist yet.
+  # None of these names is on any list.
   local tool
   for tool in SubagentCreate SpawnWorker DelegateTask AgentPool WorkflowRun \
               ScheduleJob CronSchedule CreateWorktree DispatchAgent TaskHandoff \
               RemoteExec BackgroundAgent; do
     expect_deny "future delegation tool" "$tool"
   done
-  pass "the backstop denies delegation-shaped tools that no deny list knows about yet"
+  pass "the guard denies delegation-shaped tools that no deny list knows about yet"
 }
 
-test_backstop_allows_ordinary_and_observe_only_tools() {
+test_guard_allows_ordinary_and_observe_only_tools() {
   local tool
   for tool in $PRESERVED_TOOLS; do
     expect_allow "ordinary tool" "$tool"
@@ -126,10 +103,10 @@ test_backstop_allows_ordinary_and_observe_only_tools() {
   for tool in TaskOutput TaskStop TaskGet TaskList CronList BashOutput KillShell; do
     expect_allow "observe-or-stop tool" "$tool"
   done
-  pass "the backstop leaves ordinary tools and observe-or-stop operations alone"
+  pass "the guard leaves ordinary tools and observe-or-stop operations alone"
 }
 
-test_backstop_never_classifies_mcp_tools() {
+test_guard_never_classifies_mcp_tools() {
   # An MCP server names its own tools; a task or agent noun there is common and
   # has nothing to do with fleet dispatch.
   local tool
@@ -194,7 +171,7 @@ test_task_worktree_and_non_firstmate_repo_are_inert() {
   FM_ROOT_OVERRIDE="$plain" FM_HOME="$plain" FM_STATE_OVERRIDE="$plain/state" \
     "$CHECK" --claude --tool Agent > "$OUT" 2> "$ERR" || rc=$?
   [ "$rc" -eq 0 ] || fail "a non-firstmate repo must be out of scope, got exit $rc"
-  pass "the backstop is inert in a crewmate task worktree and in a non-firstmate repo"
+  pass "the guard is inert in a crewmate task worktree and in a non-firstmate repo"
 }
 
 test_secondmate_home_is_in_scope() {
@@ -253,15 +230,16 @@ test_malformed_transport_fails_open() {
 
 test_claude_hook_registration_preserves_bash_seatbelts() {
   jq -e '
-    [.hooks.PreToolUse[] | select(.matcher != "Bash") | .hooks[].command]
+    [.hooks.PreToolUse[] | .hooks[].command]
       | any(contains("fm-subagent-pretool-check.sh --claude"))
-  ' "$SETTINGS" >/dev/null || fail "Claude settings omit the delegation-shape PreToolUse backstop"
-  # The backstop matcher must reach the delegation-shaped names, not just one
-  # literal tool, or it cannot catch a future tool at all.
+  ' "$SETTINGS" >/dev/null || fail "Claude settings omit the delegation-shape PreToolUse guard"
+  # A stem-enumerating matcher repeats the fail-open-by-enumeration defect the
+  # script exists to remove. Match all tools and let the script be the single
+  # owner of classification.
   jq -e '
     [.hooks.PreToolUse[] | select(.hooks[].command | contains("fm-subagent-pretool-check.sh")) | .matcher] | .[0]
-      | (contains("Agent") and contains("Task") and contains("Workflow") and contains("Cron") and contains("Worktree"))
-  ' "$SETTINGS" >/dev/null || fail "the backstop matcher no longer covers the delegation-shaped families"
+      | . == ".*"
+  ' "$SETTINGS" >/dev/null || fail "the guard matcher must match all tools"
   jq -e '
     [.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[].command] as $bash
       | ($bash | any(contains("fm-arm-pretool-check.sh")))
@@ -269,16 +247,15 @@ test_claude_hook_registration_preserves_bash_seatbelts() {
       and ($bash | any(contains("fm-continuity-pretool-check.sh")))
   ' "$SETTINGS" >/dev/null || fail "the existing Bash PreToolUse seatbelts changed"
   jq -e '.hooks.Stop[0].hooks[0].command | contains("fm-turnend-guard.sh")' "$SETTINGS" >/dev/null \
-    || fail "the Stop turn-end backstop changed"
-  pass "Claude wires the backstop while preserving the Bash seatbelts and the Stop guard"
+    || fail "the Stop turn-end guard changed"
+  pass "Claude wires the guard while preserving the Bash seatbelts and the Stop guard"
 }
 
-test_deny_list_covers_every_known_delegation_tool
-test_deny_list_preserves_ordinary_tools
-test_backstop_denies_every_currently_known_delegation_tool
-test_backstop_denies_hypothetical_future_tools
-test_backstop_allows_ordinary_and_observe_only_tools
-test_backstop_never_classifies_mcp_tools
+test_tracked_settings_do_not_ship_permissions_deny
+test_guard_denies_every_currently_known_delegation_tool
+test_guard_denies_hypothetical_future_tools
+test_guard_allows_ordinary_and_observe_only_tools
+test_guard_never_classifies_mcp_tools
 test_scout_entry_point_named_when_present
 test_escape_hatch_allows_deliberate_use
 test_task_worktree_and_non_firstmate_repo_are_inert

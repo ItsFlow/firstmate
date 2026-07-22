@@ -1,10 +1,10 @@
 # Primary-session delegation guard
 
-This document is the authoritative human-readable contract for the two-layer guard that stops a firstmate primary from delegating work outside the fleet.
+This document is the authoritative human-readable contract for the guard that stops a firstmate primary from delegating work outside the fleet.
 
-Layer 1 is the `permissions.deny` list in `.claude/settings.json`, which removes the delegation tools from the model's schema.
-Layer 2 is `bin/fm-subagent-pretool-check.sh`, a PreToolUse backstop that denies a delegation-SHAPED tool name so a tool that ships before anyone updates layer 1 is still refused.
-Layer 1 is the primary fix; layer 2 exists only to cover what layer 1 structurally cannot.
+The shipped fix is `bin/fm-subagent-pretool-check.sh`, a PreToolUse guard that denies a delegation-SHAPED tool name in a genuine primary home.
+Claude primaries may also add a per-home local `permissions.deny` list as stronger hardening, because it removes known tools from the model's schema entirely.
+That local hardening is recommended, but it is not tracked shared material.
 
 ## Why this exists
 
@@ -20,7 +20,7 @@ The deeper defect is that the bypass did not merely skip dispatch, it made the g
 Only `bin/fm-spawn.sh` writes `state/<id>.meta`, and every guard keys off that record: `bin/fm-supervision-lib.sh` counts `state/*.meta`, and `bin/fm-turnend-guard.sh` exits silently when that count is zero.
 Work started through the harness's own delegation tool writes no metadata, so the in-flight count stayed at zero, the turn-end guard never blocked a blind turn end, and the continuity gate was inert.
 
-That is the reason the fence has to sit at the tool-availability layer, before the model can act.
+That is the reason the fence has to sit on the harness tool surface, before the primary can create untracked work.
 No additional guard keyed on task metadata can catch this class of failure, because the failure is precisely the absence of that metadata.
 
 ## Purpose and boundary
@@ -34,48 +34,11 @@ The scope line is therefore: wrong tool reached for, deny; wrong amount of think
 The guard is also not a dispatch-quality check.
 It says nothing about whether the resulting brief, project, or delivery mode is correct.
 
-## Layer 1: the tool-availability deny list
+## Shipped guard
 
-`.claude/settings.json` carries a single `permissions.deny` array.
-This is the one place the denied surface is enumerated, and it is deliberately a flat, readable list so its width can be reviewed at a glance.
-
-A denied name is removed from the model's schema entirely.
-The model is never offered the tool, so there is no call to intercept, no matcher to get wrong, no fail-open path, and no dependence on the model's cooperation.
-This is removal, not interception, and it is strictly stronger than any hook.
-
-The denied set is 18 names:
-
-```text
-Task  Agent  Workflow  RemoteTrigger  Monitor  ScheduleWakeup  SendMessage
-EnterWorktree  ExitWorktree  CronCreate  CronDelete  CronList
-TaskCreate  TaskGet  TaskList  TaskUpdate  TaskStop  TaskOutput
-```
-
-The width of this list is a captain-owned decision, because denying some of these changes how the captain works with the primary session.
-In particular `TaskOutput`, `TaskStop`, `TaskGet`, `TaskList`, and `CronList` only observe or stop work that already exists; they cannot create unaccounted work, and a narrower list that keeps them is a legitimate choice.
-The list ships at the wider setting so the surface is closed by default, and narrowing it is a one-line edit in one file.
-
-`tests/fm-subagent-pretool-check.test.sh` asserts every name above stays denied and that no ordinary working tool is denied, so a careless edit or a Claude Code upgrade cannot silently drop one.
-
-### Both `Task` and `Agent` are valid deny keys
-
-The tool presents to the model as `Agent`.
-A prior investigation recorded that the deny key must be `Task` and that using `Agent` "silently does nothing at all".
-That is not what this machine shows.
-
-A five-way A/B with a control, each run in its own directory to rule out settings caching, found that `Task` and `Agent` each independently remove the tool, and that a nonsense name leaves it present.
-The full evidence is in the validation record below.
-
-Both names are therefore pinned in the deny list and asserted by the test suite.
-Pinning both is correct regardless of which build is running: it costs one line and it removes the failure mode where a rename or a rollback silently reopens the surface.
-
-## Layer 2: the delegation-shape backstop
-
-A deny list is fail-open against tools that do not exist yet, and Claude Code's delegation surface is visibly growing.
-`permissions.allow` is a pre-approval list rather than an availability list, so there is no fail-closed positive allowlist to use instead.
-Layer 2 closes that forward-looking gap and nothing else.
-
-`bin/fm-subagent-pretool-check.sh` classifies the tool NAME by shape rather than against a fixed list, because a second fixed list would be a weaker duplicate of layer 1 and would add no coverage.
+`bin/fm-subagent-pretool-check.sh` classifies the tool NAME by shape rather than against a fixed list.
+The tracked Claude PreToolUse matcher is `.*`, so every Claude tool name reaches the script and the script is the single owner of classification.
+A stem-enumerating matcher would reintroduce the fail-open-by-enumeration problem this guard exists to solve, because any future tool name outside the matcher would be silently missed before the script could inspect it.
 A tool is delegation-shaped when its normalized lowercase name contains one of these stems:
 
 ```text
@@ -89,14 +52,71 @@ Two exclusions keep the shape test from producing false positives.
   An MCP server chooses its own tool names, a task or agent noun there is common, and it has no bearing on fleet dispatch.
 - The exact names `taskoutput`, `taskstop`, `taskget`, `tasklist`, `cronlist`, `bashoutput`, and `killshell` are allowed.
   These observe or stop work that already exists rather than creating it, and denying them at this layer could strand already-running work with no way to inspect or end it.
-  Layer 1 is the wider, captain-owned layer and may still remove them from the schema; layer 2 stays narrower on purpose so it can never be the reason a runaway task cannot be stopped.
+  The recommended per-home local hardening is the wider, captain-owned layer and may still remove them from the schema.
+  The shipped guard stays narrower on purpose so it can never be the reason a runaway task cannot be stopped.
 
-Because layer 1 removes today's known tools from the schema, layer 2 never fires on them in normal operation.
-It fires only on a delegation-shaped name layer 1 does not know about, which is exactly the case it exists for, and which is verified live below.
+The shipped guard fires on every delegation-shaped name that reaches it, including future names that no deny list knows about yet.
+That future-name behavior is the reason the tracked matcher must match all tools and let the script filter.
+
+## Recommended per-home local hardening
+
+Claude primaries should add this as local per-home settings, not tracked shared project settings:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Task",
+      "Agent",
+      "Workflow",
+      "RemoteTrigger",
+      "Monitor",
+      "ScheduleWakeup",
+      "SendMessage",
+      "EnterWorktree",
+      "ExitWorktree",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskUpdate",
+      "TaskStop",
+      "TaskOutput"
+    ]
+  }
+}
+```
+
+A denied name is removed from the model's schema entirely.
+The model is never offered the tool, so there is no call to intercept, no matcher to get wrong, no fail-open path, and no dependence on the model's cooperation.
+This is removal, not interception, and it is strictly stronger than any hook.
+
+This list is not tracked for two reasons.
+It is Claude-only and cannot be the harness-agnostic shipped answer.
+The tracked `.claude/settings.json` file propagates into linked firstmate-repo worktrees, where it disarms legitimate crewmates by removing the delegation tools before the hook's linked-worktree scope check or `FM_ALLOW_SUBAGENT=1` can help.
+A Claude session in the task worktree for this change reported no `Agent` tool while the tracked deny list was present, which confirms the settings layer is upstream of the hook boundary.
+
+The width of the local list is a captain-owned decision, because denying some of these changes how the captain works with the primary session.
+In particular `TaskOutput`, `TaskStop`, `TaskGet`, `TaskList`, and `CronList` only observe or stop work that already exists.
+They cannot create unaccounted work, and a narrower local list that keeps them is a legitimate choice.
+
+### Both `Task` and `Agent` are valid deny keys
+
+The tool presents to the model as `Agent`.
+A prior investigation recorded that the deny key must be `Task` and that using `Agent` "silently does nothing at all".
+That is not what this machine shows.
+
+A five-way A/B with a control, each run in its own directory to rule out settings caching, found that `Task` and `Agent` each independently remove the tool, and that a nonsense name leaves it present.
+The full evidence is in the validation record below.
+
+Pinning both names in local hardening is correct regardless of which build is running.
+It costs one line and removes the failure mode where a rename or a rollback silently reopens the surface.
 
 ## Scope
 
-Layer 2 fires only in a genuine firstmate primary home, using the shared predicate `fm_primary_scope_matches` from `bin/fm-primary-scope-lib.sh`.
+The shipped guard fires only in a genuine firstmate primary home, using the shared predicate `fm_primary_scope_matches` from `bin/fm-primary-scope-lib.sh`.
 This is the same predicate `bin/fm-sessionstart-nudge.sh` and `bin/fm-turnend-guard.sh` use, so the three tracked primary-scoped hooks cannot drift apart.
 
 A home is in scope when it has `AGENTS.md`, a `bin/` directory, an existing state directory, and either a plain checkout where git-dir equals git-common-dir or a valid `.fm-secondmate-home` marker.
@@ -107,20 +127,20 @@ A crewmate using delegation tools inside its own task worktree is legitimate and
 A non-firstmate repo is out of scope.
 Any failure to confirm the home is inert, never a block, so a broken environment can never deny a tool call.
 
-Layer 1 has no such scoping, because `.claude/settings.json` applies to whatever checkout it sits in.
-This is not a gap: a crewmate works in a project worktree with its own settings, not in firstmate's.
+The tracked `.claude/settings.json` carries no `permissions.deny` key, because project settings have no way to express the crewmate-linked-worktree exception.
+Local per-home hardening has no hook scope and must be applied only where the captain wants Claude's own delegation tools removed from the primary schema.
 
 ## Escape hatch
 
-`FM_ALLOW_SUBAGENT=1` in the session environment allows the call at layer 2.
+`FM_ALLOW_SUBAGENT=1` in the session environment allows the call at the shipped guard.
 This is the only escape hatch and the guard fails closed on every other value, including empty, `0`, `yes`, and `true`.
 
 It is an environment variable rather than a flag, a config file, or a state file because that makes it unforgeable in-session.
 The variable must be present when the harness process is launched, so no tool call the agent makes can enable it for the call that follows.
 A deliberate use therefore requires restarting the session with the variable set, which is a conscious act, while an accidental use is impossible.
 
-The escape hatch does not affect layer 1.
-A tool removed from the schema stays removed, so a genuinely intended use of a denied tool also requires editing the deny list.
+The escape hatch does not affect local Claude hardening.
+A tool removed from the schema stays removed, so a genuinely intended use of a locally denied tool also requires editing the local deny list.
 
 ## Output contract
 
@@ -142,7 +162,7 @@ Applicability turns on one question: does the harness expose built-in delegation
 
 | Harness | Delegation surface | Status |
 | --- | --- | --- |
-| Claude | 18 tools, listed above | Both layers wired and live-verified. |
+| Claude | 18 tools, listed above | Shipped guard wired and live-verified; per-home local hardening is recommended and live-verified. |
 | Codex | none | Not applicable, verified empirically below. Codex 0.144.1 exposes no subagent, sub-task, or delegated-agent tool, so there is nothing to remove or intercept. `.codex/hooks.json` is unchanged. |
 | Grok | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
 | OpenCode | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
@@ -185,7 +205,7 @@ Codex is therefore not applicable today, and this table row is the tripwire: if 
 
 ### Grok, OpenCode, and Pi, inspected but not wired
 
-The integration surface of each was inspected and each is structurally wireable for layer 2.
+The integration surface of each was inspected and each is structurally wireable for the shipped guard.
 
 - Grok's tracked hooks (`.grok/hooks/fm-primary-pretool-check.json`, `.grok/hooks/fm-primary-cd-check.json`) use a `PreToolUse` matcher, currently `Bash`, and pipe stdin to a checker.
   The checker already reads Grok's `.toolName` field, so only the matcher token is missing.
@@ -224,6 +244,7 @@ claude -p "$PROMPT" --dangerously-skip-permissions --output-format text
 The tool name delivered to PreToolUse hooks was established before any matcher was written, using a throwaway project whose only hook appended `.tool_name` to a log for matcher `.*`.
 It logged `Agent` and `Bash`.
 A second project using matcher `^(Task|Agent)$` logged `Agent` only, confirming both the live tool name and that Claude Code honors regex anchors in a PreToolUse matcher.
+The tracked matcher is now `.*`, matching the throwaway-project evidence above so any future tool name reaches the script classifier.
 
 ### Deny-key A/B, with control
 
@@ -253,9 +274,10 @@ TaskList*, TaskOutput*, TaskStop*, TaskUpdate*, WebFetch*, WebSearch*
 A `*` marks a deferred tool, which is lazy-loaded through `ToolSearch` and does not appear in a plain tool list unless the prompt asks for deferred entries.
 This distinction matters when reading the next result: a tool absent from a plain listing is not necessarily denied.
 
-### Layer 1, tracked settings
+### Local deny-list hardening
 
-Run in a scratch firstmate-shaped project containing `AGENTS.md`, `state/`, a full copy of `bin/`, and the tracked `.claude/settings.json` byte for byte.
+Run in a scratch firstmate-shaped project containing `AGENTS.md`, `state/`, a full copy of `bin/`, and the recommended local deny-list settings.
+This was originally run while the deny list was still in tracked project settings; the result remains the validation record for the local hardening JSON above.
 Asking for deferred entries explicitly returned:
 
 ```text
@@ -266,9 +288,9 @@ DesignSync*, NotebookEdit*, PushNotification*, WebFetch*, WebSearch*
 All 18 denied names are gone and every ordinary working tool remains, including the five deferred ones.
 Comparing against the 29-tool baseline confirms the removal set is exactly the deny list and nothing else.
 
-### Layer 2, the case layer 1 cannot cover
+### Shipped guard, the case local hardening cannot cover
 
-To reproduce a future tool that ships before the deny list is updated, `Workflow` was removed from the deny list in the same scratch project while the backstop stayed wired.
+To reproduce a future tool that ships before local hardening is updated, `Workflow` was removed from the deny list in the same scratch project while the guard stayed wired.
 
 Prompt: `Call the Workflow tool to run any trivial workflow. You must actually attempt the Workflow tool call.`
 
@@ -282,9 +304,9 @@ I attempted the Workflow tool call as requested. It was blocked by a PreToolUse 
 > deliberate exception.
 ```
 
-This is the load-bearing result: the backstop denied a delegation tool that the deny list did not cover, which is the only situation it exists for, and it proves the layer is additive rather than dead code.
+This is the load-bearing result: the shipped guard denied a delegation tool that the deny list did not cover, which is the future-name case the shape classifier exists for.
 
-### Layer 2 scope, the negative case
+### Shipped guard scope, the negative case
 
 The same `Workflow` prompt was then run in a `git worktree add` linked worktree of that scratch project, carrying the identical tracked hook and checker bytes, with no escape hatch.
 
@@ -308,12 +330,12 @@ Result: the Workflow tool call was NOT blocked by a hook. It launched and ran to
 
 A Claude deny is honored only when the hook's stdout is empty.
 `tests/fm-subagent-pretool-check.test.sh` asserts stdout is empty on every `--claude` deny and that default mode still emits the Grok object on stdout.
-The live consequence is confirmed by the layer 2 result above: Claude honored the deny and reported the reason text.
+The live consequence is confirmed by the shipped-guard result above: Claude honored the deny and reported the reason text.
 
 ## Automated validation
 
 `tests/fm-subagent-pretool-check.test.sh` owns the acceptance matrix and is registered in the `pure-contract-unit` family in `bin/fm-test-run.sh`.
-It covers the layer 1 deny list, both the denied set and the preserved ordinary tools; layer 2 denial of every work-creating delegation tool by shape; layer 2 denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop and MCP exclusions; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
+It covers the absence of `permissions.deny` from tracked Claude settings; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop and MCP exclusions; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
 
 Run:
 
@@ -321,13 +343,16 @@ Run:
 bash -n bin/fm-subagent-pretool-check.sh
 bin/fm-lint.sh
 tests/fm-subagent-pretool-check.test.sh
-bin/fm-test-run.sh --all
 ```
 
 ## Known residual gap
 
-Both layers are harness-surface fences.
-A determined primary could still create unaccounted work through `Bash` on any harness, and the `.meta`-blindness described at the top of this document is harness-independent.
+This change does not close the deeper harness-agnostic defect.
+Every firstmate guard keys off `state/<id>.meta`, and only `bin/fm-spawn.sh` writes that record.
+`bin/fm-supervision-lib.sh` counts `state/*.meta`, and `bin/fm-turnend-guard.sh` exits silently at zero.
+Unaccounted primary work therefore reads as idle rather than suspicious.
 
-The durable fix for that class is to make the guards treat "the primary is doing project-shaped work with zero `state/*.meta` files" as a suspicious state rather than an idle one, instead of keying in-flight detection solely on a record that only `bin/fm-spawn.sh` writes.
+The durable fix for that class is to make the guards treat "the primary is doing project-shaped work with zero `state/*.meta` files" as a suspicious state rather than an idle one.
+That would catch this class on any harness, including work created through `Bash`.
+This change fences only the Claude tool surface.
 That is a separate change to `bin/fm-supervision-lib.sh` and `bin/fm-turnend-guard.sh` and is out of scope here.

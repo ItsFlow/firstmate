@@ -63,15 +63,17 @@ Every verified primary harness also has a wired PreToolUse-equivalent hook that 
 `opencode` and `pi` block by throwing from `tool.execute.before` / returning `{block: true}` from `tool_call`.
 The exact hook files, commands, output-shaping quirks (Claude Code only honors the deny when stdout is empty), and validation transcripts are owned by `docs/arm-pretool-check.md`.
 When changing any primary PreToolUse hook, validate the real harness behavior in a scratch project before trusting it, then update that doc.
-## Primary delegation-surface deny list
+## Primary delegation-shape guard
 
 Claude exposes built-in delegation, scheduling, and worktree tools that a primary session can use to create work with no `state/<id>.meta`, which makes the whole guard stack inert because every guard counts that metadata.
-The primary fix is the `permissions.deny` list in `.claude/settings.json`, which removes those tools from the model's schema so they are never offered; `bin/fm-subagent-pretool-check.sh` is a second-layer PreToolUse backstop that denies a delegation-SHAPED tool name so a tool that ships before the deny list is updated is still refused.
-`docs/subagent-guard.md` owns the full contract, the denied set, the `FM_ALLOW_SUBAGENT=1` escape hatch, and the per-harness applicability review.
+The shipped mechanism is `bin/fm-subagent-pretool-check.sh`, a primary-home PreToolUse guard that denies a delegation-SHAPED tool name.
+The recommended Claude hardening is a per-home local `permissions.deny` list, because it removes known delegation tools from the model's schema so they are never offered.
+That deny list is not tracked because it is Claude-only and because tracked settings propagate into linked firstmate-repo worktrees where they disarm legitimate crewmate delegation.
+`docs/subagent-guard.md` owns the full contract, the local hardening JSON, the `FM_ALLOW_SUBAGENT=1` escape hatch, and the per-harness applicability review.
 
 Two verified facts worth pinning here.
-The subagent tool presents to the model as `Agent`, and on Claude Code 2.1.217 both `Agent` and `Task` work as `permissions.deny` keys, verified by an A/B with a nonsense-name control; the tracked list pins both so a rename or rollback cannot silently reopen the surface.
-`permissions.allow` is a pre-approval list rather than an availability list, so there is no fail-closed positive allowlist: the deny list is fail-open against tools that do not exist yet and needs a re-check on every Claude Code upgrade.
+The subagent tool presents to the model as `Agent`, and on Claude Code 2.1.217 both `Agent` and `Task` work as `permissions.deny` keys, verified by an A/B with a nonsense-name control.
+`permissions.allow` is a pre-approval list rather than an availability list, so there is no fail-closed positive allowlist.
 
 ## Primary session-start nudge
 
