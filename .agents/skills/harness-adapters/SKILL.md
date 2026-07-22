@@ -66,10 +66,9 @@ When changing any primary PreToolUse hook, validate the real harness behavior in
 ## Primary delegation-shape guard
 
 Claude exposes built-in delegation, scheduling, and worktree tools that a primary session can use to create work with no `state/<id>.meta`, which makes the whole guard stack inert because every guard counts that metadata.
-The shipped mechanism is `bin/fm-subagent-pretool-check.sh`, a primary-home PreToolUse guard that denies a delegation-SHAPED tool name.
-The recommended Claude hardening is a per-home local `permissions.deny` list, because it removes known delegation tools from the model's schema so they are never offered.
-That deny list is not tracked because it is Claude-only and because tracked settings propagate into linked firstmate-repo worktrees where they disarm legitimate crewmate delegation.
-`docs/subagent-guard.md` owns the full contract, the local hardening JSON, the `FM_ALLOW_SUBAGENT=1` escape hatch, and the per-harness applicability review.
+The primary Claude mechanism is the tracked `.claude/settings.json` `permissions.deny` list, because it removes known delegation tools from the model's schema so they are never offered.
+The backstop mechanism is `bin/fm-subagent-pretool-check.sh`, a primary-home PreToolUse guard that denies a delegation-SHAPED tool name not yet covered by that fixed list.
+`docs/subagent-guard.md` owns the full contract, the shipped deny-list JSON, the `FM_ALLOW_SUBAGENT=1` escape hatch, and the per-harness applicability review.
 
 Two verified facts worth pinning here.
 The subagent tool presents to the model as `Agent`, and on Claude Code 2.1.217 both `Agent` and `Task` work as `permissions.deny` keys, verified by an A/B with a nonsense-name control.
