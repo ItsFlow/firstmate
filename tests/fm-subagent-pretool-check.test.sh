@@ -23,8 +23,9 @@ SCOUT_ROUTE='investigation or diagnosis goes to bin/fm-scout.sh "<question>" [pr
 
 # Every delegation, scheduling, worktree, and task-tracking tool Claude Code
 # 2.1.217 offered a primary session in the observed baseline.
-# The tracked deny list uses this as its exact primary-layer contract; the guard
-# uses the same inventory as shape-classification coverage.
+# This inventory is shape-classification coverage for the shipped guard and the
+# recommended local Claude deny-list hardening list, but tracked settings must
+# not ship that Claude-only permissions layer.
 DELEGATION_TOOLS='Task Agent Workflow RemoteTrigger Monitor ScheduleWakeup SendMessage EnterWorktree ExitWorktree CronCreate CronDelete CronList TaskCreate TaskGet TaskList TaskUpdate TaskStop TaskOutput'
 
 # Tools that must stay available: denying these would break ordinary work.
@@ -64,12 +65,10 @@ expect_deny() {
 # Tracked settings boundary and delegation-shape PreToolUse guard.
 # ---------------------------------------------------------------------------
 
-test_tracked_settings_ship_primary_permissions_deny() {
-  local expected
-  expected=$(printf '%s\n' $DELEGATION_TOOLS | jq -R . | jq -cs .)
-  jq -e --argjson expected "$expected" '.permissions.deny == $expected' "$SETTINGS" >/dev/null \
-    || fail "tracked Claude settings must ship the exact primary permissions.deny list"
-  pass "tracked Claude settings ship the primary permissions.deny list"
+test_tracked_settings_do_not_ship_permissions_deny() {
+  jq -e 'keys == ["hooks"] and (has("permissions") | not)' "$SETTINGS" >/dev/null \
+    || fail "tracked Claude settings must contain only hooks and no permissions key"
+  pass "tracked Claude settings do not ship permissions.deny"
 }
 
 test_guard_denies_every_currently_known_delegation_tool() {
@@ -270,7 +269,7 @@ test_claude_hook_registration_preserves_bash_seatbelts() {
   pass "Claude wires the guard while preserving the Bash seatbelts and the Stop guard"
 }
 
-test_tracked_settings_ship_primary_permissions_deny
+test_tracked_settings_do_not_ship_permissions_deny
 test_guard_denies_every_currently_known_delegation_tool
 test_guard_denies_hypothetical_future_tools
 test_guard_allows_ordinary_and_observe_only_tools

@@ -10,18 +10,20 @@
 # and it dies with the primary session instead of living in its own backend
 # session.
 #
-# The tracked Claude `permissions.deny` list is the primary shipped guard for
-# known Claude delegation tools because it removes them from the model's schema
-# entirely.
-# This script is the backstop for future delegation-shaped names that are not
-# yet in that fixed list.
+# This scoped PreToolUse guard is the shipped mechanism.
+# Claude primaries should also use an untracked per-home local
+# `permissions.deny` list as hardening for known Claude delegation tools,
+# because it removes them from the model's schema entirely.
+# That deny list must not be tracked: it is Claude-only rather than
+# harness-agnostic, and tracked project settings propagate into linked
+# worktrees where they disarm legitimate crewmates.
 # The tracked Claude matcher is deliberately `.*`: a stem-enumerating matcher
 # would reintroduce the fail-open-by-enumeration problem this guard exists to
 # solve, because any future tool name outside the matcher would never reach this
 # script.
 # This script is therefore the single owner of classification.
 # It matches a delegation-SHAPED tool name rather than a fixed list, so a future
-# tool that ships before anyone updates the deny list is still refused.
+# tool that ships before anyone updates a local deny list is still refused.
 #
 # The guard is narrow by design. It classifies ONE thing: the shape of the tool
 # name. It makes no judgment about whether the work should be delegated at all,
@@ -58,8 +60,8 @@ DELEGATION_STEMS='agent subagent task workflow cron schedul worktree delegate sp
 # Exact lowercase tool names that match a stem above but only OBSERVE or STOP
 # work that already exists. Reading or ending unaccounted work is not creating
 # it, and denying these would strand already-running work with no way to inspect
-# or end it. The tracked Claude deny list may still remove these from the
-# schema; this backstop guard deliberately stays narrower so it can never be the
+# or end it. A local Claude deny list may still remove these from the
+# schema; this shipped guard deliberately stays narrower so it can never be the
 # reason a runaway task cannot be stopped.
 OBSERVE_ONLY_TOOLS='taskoutput taskstop taskget tasklist cronlist bashoutput killshell'
 
@@ -74,10 +76,12 @@ Usage: fm-subagent-pretool-check.sh [--tool <tool-name>] [--claude]
 With no --tool, reads a PreToolUse-style JSON payload on stdin (Claude/Codex
 tool_name, or Grok toolName).
 Denies a delegation-SHAPED tool name in a genuine primary home.
-Tracked Claude settings also ship a permissions.deny list that removes known
-delegation tools from the model schema before this hook is needed.
-This hook remains as a backstop for future delegation-shaped names outside that
-fixed list.
+Claude primaries may also add an untracked per-home permissions.deny list that
+removes known delegation tools from the model schema before this hook is needed.
+Do not ship that Claude-only list in tracked project settings, because linked
+worktrees inherit it and legitimate crewmates would lose their delegation tools.
+This hook remains as the shipped guard for future delegation-shaped names
+outside any local fixed list.
 Fires only in a genuine firstmate primary home; it is a silent no-op in a
 crewmate/scout task worktree or any non-firstmate repo, where a worker using
 delegation tools is legitimate.

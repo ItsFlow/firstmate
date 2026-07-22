@@ -1,26 +1,4 @@
 {
-  "permissions": {
-    "deny": [
-      "Task",
-      "Agent",
-      "Workflow",
-      "RemoteTrigger",
-      "Monitor",
-      "ScheduleWakeup",
-      "SendMessage",
-      "EnterWorktree",
-      "ExitWorktree",
-      "CronCreate",
-      "CronDelete",
-      "CronList",
-      "TaskCreate",
-      "TaskGet",
-      "TaskList",
-      "TaskUpdate",
-      "TaskStop",
-      "TaskOutput"
-    ]
-  },
   "hooks": {
     "SessionStart": [
       {
