@@ -72,16 +72,28 @@ test_registration_rejects_tampering() {
 }
 
 test_relay_is_silent_when_board_unserved() {
-  local home out
+  local home fakebin out
   home=$(make_home silent)
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+exit 7
+SH
+  cat > "$fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+printf 'poll invoked\n' > "$POLL_MARKER"
+exit 1
+SH
+  chmod +x "$fakebin/curl" "$fakebin/lavish-axi"
   FM_HOME="$home" "$ARM" "$home/board.html" >/dev/null || fail "arming must succeed"
-  # No Lavish session is serving this board, so the poll fails fast and the relay
-  # prints nothing and wakes no one. This is what keeps an idle relay quiet.
-  out=$(bash "$home/state/inbox.check.sh")
+  out=$(POLL_MARKER="$home/poll-invoked" PATH="$fakebin:$PATH" \
+    bash "$home/state/inbox.check.sh")
   [ -z "$out" ] || fail "an unserved relay must print nothing, got: $out"
+  assert_absent "$home/poll-invoked" \
+    "an unserved relay must not invoke lavish-axi poll"
   assert_absent "$home/state/inbox-answers" \
     "an unserved relay must not create an answers directory"
-  pass "the relay stays silent and writes nothing while the board is unserved"
+  pass "the relay stays silent and starts no server while the board is unserved"
 }
 
 test_relay_targets_the_board_path() {
@@ -134,7 +146,11 @@ set -u
 printf '%s\n%s\n' "${LAVISH_AXI_PORT:-}" "${2:-}" > "$CAPTURE"
 exit 1
 SH
-  chmod +x "$fakebin/lavish-axi"
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin/lavish-axi" "$fakebin/curl"
   FM_HOME="$home" "$ARM" --port 5173 "$home/board.html" >/dev/null \
     || fail "arming a quoted path must succeed"
   bash -n "$home/state/inbox.check.sh" || fail "the relay must be valid bash"
@@ -143,6 +159,32 @@ SH
   expected=$(printf '5173\n%s' "$home/board.html")
   [ "$actual" = "$expected" ] || fail "the relay must preserve its port and board path"
   pass "the relay shell-escapes paths and exports its target port"
+}
+
+test_relay_wakes_once_for_feedback() {
+  local home fakebin out answers count
+  home=$(make_home feedback)
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+printf 'status: feedback\n'
+printf ' decision,"DECISION task: ship it"\n'
+exit 0
+SH
+  chmod +x "$fakebin/curl" "$fakebin/lavish-axi"
+  FM_HOME="$home" "$ARM" "$home/board.html" >/dev/null || fail "arming must succeed"
+  out=$(PATH="$fakebin:$PATH" bash "$home/state/inbox.check.sh")
+  [ "$out" = "inbox board: a captain answer is waiting in state/inbox-answers" ] \
+    || fail "feedback must emit exactly one fixed wake line, got: $out"
+  answers=$home/state/inbox-answers
+  assert_present "$answers" "feedback must create the answer drop"
+  count=$(find "$answers" -type f | wc -l | tr -d ' ')
+  [ "$count" = 1 ] || fail "feedback must write exactly one answer file, got $count"
+  pass "the relay emits one fixed wake line for feedback"
 }
 
 test_serve_passes_resolved_port_to_relay() {
@@ -176,4 +218,5 @@ test_relay_is_silent_when_board_unserved
 test_relay_targets_the_board_path
 test_relay_rejects_linked_check_path_without_writing_through
 test_relay_escapes_paths_and_exports_port
+test_relay_wakes_once_for_feedback
 test_serve_passes_resolved_port_to_relay

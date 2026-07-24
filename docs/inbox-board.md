@@ -31,9 +31,9 @@ The captain answers in the browser through Lavish's input contract:
 ## The answer relay (why answers reliably arrive)
 
 Submitted answers are committed to the Lavish server and never lost, but something has to poll for them.
-`fm-inbox-arm.sh` writes `state/inbox.check.sh` - a bounded `lavish-axi poll` of the served board - and binds its exact bytes with `bin/fm-check-register.sh`, so firstmate's supervision cycle runs it on the normal check cadence, appends any answer to `state/inbox-answers/`, and wakes firstmate to act on it.
+`fm-inbox-arm.sh` writes `state/inbox.check.sh` - a bounded relay that only calls `lavish-axi poll` after the board port is already listening - and binds its exact bytes with `bin/fm-check-register.sh`, so firstmate's supervision cycle runs it on the normal check cadence, appends any answer to `state/inbox-answers/`, and wakes firstmate to act on it.
 This is the same registered-check pattern as the Workflowy `@go` channel.
-The relay fails closed: when the board is not being served, `lavish-axi poll` errors fast, so the check prints nothing and wakes no one.
+The relay fails closed: when the board is not being served, the check exits before polling, prints nothing, and wakes no one.
 It only runs while a supervision cycle is armed, so answer latency is one check sweep (`FM_CHECK_INTERVAL`, default 300s).
 
 ## Serving
