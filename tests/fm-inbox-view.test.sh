@@ -207,6 +207,29 @@ test_recorded_pr_is_marked_unverified() {
   pass "recorded pull requests render as unverified and landed ones stay out"
 }
 
+test_unknown_pr_verification_stays_reviewable() {
+  local home fakebin board review
+  home=$(make_home prunknown)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  chmod +x "$fakebin/gh"
+  board=$home/board.html
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" --verify-prs "$board" >/dev/null 2>&1 \
+    || fail "generator must succeed"
+  review=$(section_of "$board" review)
+  assert_contains "$review" "pull/920" \
+    "a pull request with an unknown verification result must stay reviewable"
+  assert_contains "$review" "could not be checked" \
+    "an unknown verification result must be marked as unchecked"
+  assert_not_contains "$review" "already unknown" \
+    "an unknown verification result must not be classified as stale"
+  pass "unknown PR verification stays in Review and merge"
+}
+
 test_cards_render_and_absence_is_declared() {
   local home fakebin board cards
   home=$(make_home cards)
@@ -393,6 +416,7 @@ test_help_exits_zero
 test_selects_captain_holds_regardless_of_kind
 test_uses_untruncated_hold_text
 test_recorded_pr_is_marked_unverified
+test_unknown_pr_verification_stays_reviewable
 test_cards_render_and_absence_is_declared
 test_answer_control_queues_once_per_question
 test_free_text_answer_is_first_class

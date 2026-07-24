@@ -22,6 +22,7 @@ import sys
 from datetime import datetime, timezone
 
 SCHEMA = "fm-inbox-board.v1"
+PR_STALE_STATES = {"CLOSED", "MERGED"}
 
 # --------------------------------------------------------------------------
 # snapshot selection
@@ -318,7 +319,7 @@ def build_model(snap, full_text, cards, pr_state, pr_verified):
             "state": state,
             "verified": bool(pr_verified and state),
         }
-        if row["verified"] and state not in ("OPEN",):
+        if row["verified"] and state in PR_STALE_STATES:
             stale_prs.append(row)
         else:
             prs.append(row)

@@ -95,7 +95,8 @@ fi
 # Arm the relay so answers reach firstmate without manual polling. Owned by
 # fm-inbox-arm.sh; this is firstmate's own private state.
 if [ "$ARM" -eq 1 ]; then
-  "$SCRIPT_DIR/fm-inbox-arm.sh" "$BOARD" || die "could not arm the answer relay"
+  "$SCRIPT_DIR/fm-inbox-arm.sh" --port "$PORT" "$BOARD" \
+    || die "could not arm the answer relay"
 fi
 
 # Detect the Tailscale address unless one was supplied. The tailscale CLI reports

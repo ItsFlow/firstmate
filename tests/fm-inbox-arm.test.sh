@@ -9,6 +9,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ARM="$ROOT/bin/fm-inbox-arm.sh"
+SERVE="$ROOT/bin/fm-inbox-serve.sh"
 TMP_ROOT=$(fm_test_tmproot fm-inbox-arm)
 
 # check_registered <state-dir> <id>: true when the watcher would execute the
@@ -94,9 +95,85 @@ test_relay_targets_the_board_path() {
   pass "the relay is bound to its board and a durable answer drop"
 }
 
+test_relay_rejects_linked_check_path_without_writing_through() {
+  local home peer out
+  home=$(make_home linked)
+  peer="$home/external.txt"
+  printf 'external sentinel\n' > "$peer"
+  ln -s "$peer" "$home/state/inbox.check.sh"
+  if out=$(FM_HOME="$home" "$ARM" "$home/board.html" 2>&1); then
+    fail "arming must refuse a linked relay path: $out"
+  fi
+  [ "$(cat "$peer")" = "external sentinel" ] \
+    || fail "a linked relay path must not be written through"
+  [ -L "$home/state/inbox.check.sh" ] || fail "the rejected symlink must remain"
+  assert_absent "$home/state/inbox.check-trust" \
+    "a rejected relay path must not be registered"
+
+  rm -f -- "$home/state/inbox.check.sh"
+  printf 'hardlink sentinel\n' > "$peer"
+  ln "$peer" "$home/state/inbox.check.sh"
+  if out=$(FM_HOME="$home" "$ARM" "$home/board.html" 2>&1); then
+    fail "arming must refuse a hardlinked relay path: $out"
+  fi
+  [ "$(cat "$peer")" = "hardlink sentinel" ] \
+    || fail "a hardlinked relay path must not be written through"
+  assert_absent "$home/state/inbox.check-trust" \
+    "a rejected hardlinked relay path must not be registered"
+  pass "arming refuses linked relay paths without writing through them"
+}
+
+test_relay_escapes_paths_and_exports_port() {
+  local home fakebin capture actual expected
+  home=$(make_home "quote'path")
+  fakebin=$(fm_fakebin "$home")
+  capture="$home/poll-capture.txt"
+  cat > "$fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf '%s\n%s\n' "${LAVISH_AXI_PORT:-}" "${2:-}" > "$CAPTURE"
+exit 1
+SH
+  chmod +x "$fakebin/lavish-axi"
+  FM_HOME="$home" "$ARM" --port 5173 "$home/board.html" >/dev/null \
+    || fail "arming a quoted path must succeed"
+  bash -n "$home/state/inbox.check.sh" || fail "the relay must be valid bash"
+  CAPTURE="$capture" PATH="$fakebin:$PATH" bash "$home/state/inbox.check.sh"
+  actual=$(cat "$capture")
+  expected=$(printf '5173\n%s' "$home/board.html")
+  [ "$actual" = "$expected" ] || fail "the relay must preserve its port and board path"
+  pass "the relay shell-escapes paths and exports its target port"
+}
+
+test_serve_passes_resolved_port_to_relay() {
+  local home fakebin out
+  home=$(make_home serveport)
+  fakebin=$(fm_fakebin "$home")
+  cat > "$fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+printf 'url: "http://%s:%s/session/abc123"\n' "${LAVISH_AXI_LINK_HOST:-127.0.0.1}" "${LAVISH_AXI_PORT:-4387}"
+SH
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+printf '200'
+SH
+  chmod +x "$fakebin/lavish-axi" "$fakebin/curl"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" LAVISH_AXI_PORT=5199 \
+    "$SERVE" --no-generate --link-host 100.64.0.1 "$home/board.html" 2>&1) \
+    || fail "serving must succeed: $out"
+  assert_contains "$out" "reachable: yes" "the served board must be verified"
+  assert_grep "export LAVISH_AXI_PORT=5199" "$home/state/inbox.check.sh" \
+    "serving must arm the relay against the served port"
+  pass "serve passes its resolved port into the armed relay"
+}
+
 test_help_exits_zero
 test_no_arg_refuses
 test_writes_and_registers_a_valid_check
 test_registration_rejects_tampering
 test_relay_is_silent_when_board_unserved
 test_relay_targets_the_board_path
+test_relay_rejects_linked_check_path_without_writing_through
+test_relay_escapes_paths_and_exports_port
+test_serve_passes_resolved_port_to_relay
