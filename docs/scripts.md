@@ -15,6 +15,10 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
 | `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view                                   |
 | `fm-bearings-snapshot.sh` | Project the fleet snapshot to the compact TOON bearings view; local-only unless `--include-prs` |
+| `fm-inbox-view.sh`       | Generate the read-only captain decision-and-review board HTML                        |
+| `fm-inbox-render.py`     | Render the inbox-board HTML from snapshot, card, full-text, and PR-state inputs      |
+| `fm-inbox-arm.sh`        | Write and register the captain-inbox answer relay                                    |
+| `fm-inbox-serve.sh`      | Generate, arm, serve, print, and verify the captain inbox board link                 |
 | `fm-update.sh`           | Fast-forward-only self-update of firstmate and secondmate homes from origin          |
 | `fm-backlog-handoff.sh`  | Validate and delegate queued backlog-item moves into a secondmate home               |
 | `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions                 |

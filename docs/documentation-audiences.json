@@ -78,6 +78,10 @@
       "target": "docs/verification/supervision.md"
     },
     {
+      "source": "docs/inbox-board.md",
+      "target": "docs/verification/supervision.md"
+    },
+    {
       "source": "docs/tmux-backend.md",
       "target": "docs/verification/runtime-backends.md"
     },
@@ -249,6 +253,10 @@
     },
     {
       "path": "docs/herdr-backend.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/inbox-board.md",
       "audience": "operator-current"
     },
     {

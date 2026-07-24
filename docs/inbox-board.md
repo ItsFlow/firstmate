@@ -3,7 +3,7 @@
 The inbox board is one Lavish HTML surface that collects everything waiting on the captain - decisions to make, pull requests to approve, and stopped work - so it arrives in one place he opens when he wants, instead of as scattered chat interruptions.
 This is the operator reference; each script's own `--help` owns exact flags and mechanics.
 
-## The three scripts
+## Operator commands
 
 `bin/fm-inbox-view.sh` generates the board as a pure read-only projection over `bin/fm-fleet-snapshot.sh --json` plus `tasks-axi show <id> --full`, writing nothing but the HTML file.
 `tests/fm-inbox-view.test.sh` proves it leaves `state/` and `data/` byte-identical.
@@ -43,9 +43,5 @@ Boards are served on the Tailscale address so the captain reaches them from the 
 
 ## Verification evidence
 
-Recorded 2026-07-25 on the mini (Tailscale `100.86.134.28`), against the real main home:
-
-- Generation is read-only: a content-hash manifest of `state/` and `data/` (243 files) is byte-identical before and after `fm-inbox-view.sh`.
-- End to end, `fm-inbox-serve.sh --no-generate --link-host 127.0.0.1` against a fixture home armed the relay, served the board, and confirmed `HTTP 200` for `http://<host>:4387/session/<id>`.
-- The registered relay is accepted by `fm_custom_check_registered`, and a one-byte edit to the check file makes it rejected.
-- Run against a fixture board with no active Lavish session, the relay printed nothing, exited 0 in ~1.2s, and created no `state/inbox-answers/` directory.
+The active evidence is recorded in [supervision verification](verification/supervision.md#captain-inbox-answer-relay).
+The focused regression entry points are `tests/fm-inbox-view.test.sh` and `tests/fm-inbox-arm.test.sh`.

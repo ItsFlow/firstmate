@@ -108,6 +108,8 @@ init_changed_fixture_repo() {
     fm-pr-merge.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-afk-return.test.sh \
+    fm-inbox-view.test.sh \
+    fm-inbox-arm.test.sh \
     fm-bearings-snapshot.test.sh \
     fm-backend-cmux.test.sh \
     fm-backend-zellij.test.sh \
@@ -118,6 +120,10 @@ init_changed_fixture_repo() {
   : >"$repo/tests/lib.sh"
   : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
+  : >"$repo/bin/fm-inbox-view.sh"
+  : >"$repo/bin/fm-inbox-render.py"
+  : >"$repo/bin/fm-inbox-arm.sh"
+  : >"$repo/bin/fm-inbox-serve.sh"
   : >"$repo/bin/unmapped-source.sh"
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
@@ -160,6 +166,24 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-afk-return.test.sh" "supervisor target selects afk coverage"
   git -C "$repo" add bin/fm-supervisor-target-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm supervisor-change
+
+  printf '\n' >>"$repo/bin/fm-inbox-render.py"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-inbox-view.test.sh" \
+    "inbox renderer source selects inbox view coverage"
+  assert_not_contains "$listed" "tests/fm-bearings-snapshot.test.sh" \
+    "inbox renderer source must not pull unrelated bearings coverage"
+  git -C "$repo" add bin/fm-inbox-render.py
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm inbox-renderer-change
+
+  printf '\n' >>"$repo/bin/fm-inbox-serve.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-inbox-arm.test.sh" \
+    "inbox serve source selects inbox relay coverage"
+  assert_not_contains "$listed" "tests/fm-bearings-snapshot.test.sh" \
+    "inbox serve source must not pull unrelated bearings coverage"
+  git -C "$repo" add bin/fm-inbox-serve.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm inbox-serve-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"
