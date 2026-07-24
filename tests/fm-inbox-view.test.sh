@@ -64,6 +64,7 @@ write_fixture() {  # <home>
 ## Queued
 - [ ] hidden-decision - Hidden Decision (repo: alpha) (kind: ship) (since 2026-07-01) (hold: short snapshot text) (hold-kind: captain)
 - [ ] plain-decision - Plain Decision (repo: beta) (kind: captain) (since 2026-07-02) (hold: another note) (hold-kind: captain)
+- [ ] workflowy-partner-idea - Workflowy Partner Idea (kind: captain) (since 2026-07-02) (hold: a no-project decision) (hold-kind: captain)
 - [ ] blocked-decision - Blocked Decision blocked-by: running-task (repo: alpha) (kind: captain) (since 2026-07-03) (hold: waiting note) (hold-kind: captain)
 - [ ] pr-task - PR Task (repo: alpha) (kind: ship) (since 2026-07-05)
 
@@ -165,7 +166,7 @@ test_selects_captain_holds_regardless_of_kind() {
     "a captain-kind captain hold must appear in Decide"
   assert_no_grep 'id="decision-blocked-decision"' "$board" \
     "a captain hold with an unresolved blocker must not appear in Decide"
-  assert_grep '2 decisions' "$board" "the Decide count must match the selection"
+  assert_grep '3 decisions' "$board" "the Decide count must match the selection"
   pass "Decide selects on the captain hold alone and excludes blocked holds"
 }
 
@@ -247,6 +248,99 @@ test_answer_control_queues_once_per_question() {
   pass "answers queue exactly once per question, on submit"
 }
 
+test_free_text_answer_is_first_class() {
+  local home fakebin cards board
+  home=$(make_home freeform)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  cards=$home/cards.md
+  write_cards "$cards"
+  board=$home/board.html
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" --cards "$cards" "$board" >/dev/null 2>&1 \
+    || fail "generator must succeed"
+  # A free-text answer must submit on its own: the guard blocks only when BOTH
+  # the note and any picked option are empty, never on a missing option alone.
+  assert_grep 'if(!choice&&!note){' "$board" \
+    "the answer must submit with just free text, not require an option"
+  assert_no_grep 'var answer=data.get(' "$board" \
+    "the old option-required submit path must be gone"
+  assert_grep 'You do not have to pick an option above.' "$board" \
+    "the free-text box must say an option is not required"
+  # A card with options still offers them as quick-picks with a clear-selection
+  # reset, so a picked radio is never a trap.
+  assert_grep 'name="answer" value="Yes, do it"' "$board" \
+    "predefined options remain available as quick-picks"
+  assert_grep 'fmInboxClear(this)' "$board" "a clear-selection reset must exist"
+  pass "free text answers stand alone and options are optional quick-picks"
+}
+
+test_discuss_path_present() {
+  local home fakebin board
+  home=$(make_home discuss)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  board=$home/board.html
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" "$board" >/dev/null 2>&1 \
+    || fail "generator must succeed"
+  assert_grep 'data-lavish-question="hidden-decision-discuss"' "$board" \
+    "each decision needs a discuss path distinct from its answer"
+  assert_grep 'fmInboxDiscuss' "$board" "the discuss control must be wired"
+  assert_grep "'DISCUSS '+hold" "$board" \
+    "a question must be relayed as a discussion, not an answer"
+  assert_grep 'Ask a question instead' "$board" "the discuss affordance must be visible"
+  pass "every decision offers a discuss/clarify path"
+}
+
+test_answer_sends_immediately() {
+  local home fakebin board
+  home=$(make_home immediate)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  board=$home/board.html
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" "$board" >/dev/null 2>&1 \
+    || fail "generator must succeed"
+  # The submit both queues and sends, so an answer never waits on a separate
+  # Send button the captain has to find - the silently-eaten-answers failure.
+  assert_grep 'window.lavish.sendQueuedPrompts()' "$board" \
+    "a submitted answer must be sent, not left queued"
+  assert_grep 'Sent to firstmate.' "$board" "the card must confirm delivery"
+  pass "a submitted answer is sent immediately with visible confirmation"
+}
+
+test_no_project_items_get_readable_names() {
+  local home fakebin board
+  home=$(make_home areas)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  board=$home/board.html
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" "$board" >/dev/null 2>&1 \
+    || fail "generator must succeed"
+  # workflowy-partner-idea has no repo; it must read as a named area, never as
+  # the useless generic "no project" badge.
+  assert_grep 'id="decision-workflowy-partner-idea"' "$board" \
+    "the no-project decision must render"
+  assert_grep '<option value="personal">' "$board" \
+    "a no-project item must get a readable area name in the filter"
+  assert_no_grep '>no project<' "$board" \
+    "no item should show the generic no-project label"
+  pass "no-project items get readable area names instead of a generic badge"
+}
+
+test_long_titles_wrap() {
+  local home fakebin board
+  home=$(make_home overflow)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  board=$home/board.html
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" "$board" >/dev/null 2>&1 \
+    || fail "generator must succeed"
+  # Lavish's layout audit flags horizontal overflow as an error, so the page
+  # must not scroll sideways and long unbreakable strings must wrap.
+  assert_grep 'overflow-x:hidden' "$board" "the page body must not scroll sideways"
+  assert_grep 'word-break:break-word' "$board" "long titles and ids must wrap"
+  pass "long titles wrap instead of overflowing the card"
+}
+
 test_filters_are_present() {
   local home fakebin board
   home=$(make_home filters)
@@ -301,6 +395,11 @@ test_uses_untruncated_hold_text
 test_recorded_pr_is_marked_unverified
 test_cards_render_and_absence_is_declared
 test_answer_control_queues_once_per_question
+test_free_text_answer_is_first_class
+test_discuss_path_present
+test_answer_sends_immediately
+test_no_project_items_get_readable_names
+test_long_titles_wrap
 test_filters_are_present
 test_generator_mutates_nothing
 test_missing_cards_file_refuses
