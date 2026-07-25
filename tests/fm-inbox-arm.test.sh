@@ -31,6 +31,14 @@ make_home() {  # <name>
   printf '%s\n' "$home"
 }
 
+file_mode() {
+  if [ "$(uname)" = Darwin ]; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
 test_help_exits_zero() {
   local out
   out=$("$ARM" --help) || fail "--help must exit 0"
@@ -52,8 +60,7 @@ test_writes_and_registers_a_valid_check() {
   assert_contains "$out" "armed:" "arming must confirm"
   assert_present "$home/state/inbox.check.sh" "the relay file must be written"
   assert_present "$home/state/inbox.check-trust" "the relay must be registered"
-  [ "$(stat -f '%Lp' "$home/state/inbox.check.sh" 2>/dev/null \
-      || stat -c '%a' "$home/state/inbox.check.sh")" = 700 ] \
+  [ "$(file_mode "$home/state/inbox.check.sh")" = 700 ] \
     || fail "the relay must be mode 0700"
   check_registered "$home/state" inbox || fail "the watcher must accept the relay"
   pass "arming writes a mode-0700 relay and registers it for the watcher"
