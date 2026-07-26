@@ -672,7 +672,7 @@ EOF
 }
 
 test_session_lock_concurrent_single_winner() {
-  local rec root home fakebin ready completed winners pids i pid count
+  local rec root home fakebin ready completed winners pids i pid count pid_file
   rec=$(new_world lock-concurrency)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -715,8 +715,15 @@ SH
   pids=
   i=1
   while [ "$i" -le 40 ]; do
+    pid_file="$home/state/worker-$i.pid"
     (
-      harness_pid=$BASHPID
+      while [ ! -s "$pid_file" ]; do
+        sleep 0.01
+      done
+      harness_pid=$(cat "$pid_file") || exit 1
+      case "$harness_pid" in
+        ''|*[!0-9]*) exit 1 ;;
+      esac
       : > "$home/state/harness-$harness_pid"
       : > "$ready/$i"
       while [ "$(find "$ready" -type f | wc -l | tr -d ' ')" -lt 40 ]; do
@@ -732,7 +739,9 @@ SH
         sleep 0.01
       done
     ) &
-    pids="$pids $!"
+    pid=$!
+    printf '%s\n' "$pid" > "$pid_file"
+    pids="$pids $pid"
     i=$((i + 1))
   done
   for pid in $pids; do
