@@ -279,11 +279,11 @@ $ tests/fm-pi-primary-types.test.sh
 ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.81.1
 ```
 
-## 2026-07-26 Pi 0.82.1 compatibility check
+## 2026-07-26 Pi 0.82.1 compatibility verification
 
-Pi 0.82.1 preserved the exported-class API boundary, but the deterministic TUI regression is not yet a passing compatibility record.
-The current run failed at the Ctrl+O startup-help wording assertion because Pi now renders `escape interrupt` where the test still expects the earlier `escape to interrupt` phrase.
+Pi 0.82.1 preserved the exported-class API boundary and the deterministic native Calm TUI guarantees.
 The installed declaration package was 0.82.1, and the local typecheck entry point skipped because `tsc` was absent.
+The Chrome/Chromium export DOM check skipped in this environment, while the native regression continued and passed.
 
 ```text
 $ pi --version
@@ -298,13 +298,8 @@ ok - Pi calm resolves its persistent home independently of Pi's launch directory
 ok - Pi calm centralizes transcript visibility, preserves execution/export data, keeps native working visible, and persists its choice across session starts
 ok - Pi operational follow-up E2E processes exact user-role notifications once while Calm hides current and adjacent rows, Calm off and absent render them, and restart preserves semantics
 ok - Pi Calm native /skill:ahoy geometry keeps every collapsed thinking and tool block at zero height while preserving expansion, history, restart, and Calm-off rendering
-not ok - Ctrl+O did not retain Pi's ordinary startup and tool expansion behavior (missing: 'escape to interrupt')
---- output ---
- pi v0.82.1
- escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
- Press ctrl+o to show full startup help and loaded resources.
-
- CALM_E2E_OUTPUT
+skip: Chrome/Chromium could not render export DOM
+ok - Pi calm native E2E keeps Working and captain turns visible, hides exact operational user rows without changing persistence, restores them Calm-off, survives restart, and preserves export plus Ctrl+O behavior
 
 $ tests/fm-pi-primary-types.test.sh
 skip: tsc not found for Pi extension typecheck
