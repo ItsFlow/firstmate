@@ -15,6 +15,13 @@
 # default branch, so a fast-forward there advances HEAD only and never touches
 # any other worktree's checkout or the shared `main` branch.
 #
+# `origin` is always the authoritative runnable and routine-push repository.
+# A fork-based installation may also configure a fetch-only `upstream` remote.
+# This script fetches that remote and reports whether origin already contains
+# its default branch, is simply behind it, or has diverged from it. It never
+# advances from upstream directly: upstream changes first enter origin through
+# a reviewed intake PR, then this updater installs the resulting origin commit.
+#
 # The fast-forward mechanics live in bin/fm-ff-lib.sh (base_mode "origin" here);
 # the same library drives the local-HEAD secondmate sync used by fm-spawn.sh and
 # fm-bootstrap.sh, so there is one ff implementation, not several.
@@ -41,6 +48,52 @@ SECONDMATES_MD="$FM_HOME/data/secondmates.md"
 
 usage() { echo "usage: fm-update.sh [--help]" >&2; }
 
+report_upstream_intake() {
+  local origin_default upstream_ref upstream_default counts fork_only upstream_only
+
+  if ! git -C "$FM_ROOT" remote get-url upstream >/dev/null 2>&1; then
+    echo "upstream-intake: not configured"
+    return 0
+  fi
+  if ! git -C "$FM_ROOT" fetch upstream --prune --quiet 2>/dev/null; then
+    echo "upstream-intake: skipped: upstream fetch failed"
+    return 0
+  fi
+
+  origin_default=$(default_branch "$FM_ROOT") || {
+    echo "upstream-intake: skipped: cannot determine origin default branch"
+    return 0
+  }
+  upstream_ref=$(git -C "$FM_ROOT" symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null || true)
+  upstream_default=${upstream_ref#upstream/}
+  if [ -z "$upstream_default" ]; then
+    upstream_default=$origin_default
+  fi
+  if ! git -C "$FM_ROOT" rev-parse --verify --quiet "origin/$origin_default^{commit}" >/dev/null; then
+    echo "upstream-intake: skipped: origin/$origin_default does not exist"
+    return 0
+  fi
+  if ! git -C "$FM_ROOT" rev-parse --verify --quiet "upstream/$upstream_default^{commit}" >/dev/null; then
+    echo "upstream-intake: skipped: upstream/$upstream_default does not exist"
+    return 0
+  fi
+
+  counts=$(git -C "$FM_ROOT" rev-list --left-right --count \
+    "origin/$origin_default...upstream/$upstream_default" 2>/dev/null) || {
+    echo "upstream-intake: skipped: cannot compare origin and upstream"
+    return 0
+  }
+  read -r fork_only upstream_only <<< "$counts"
+
+  if [ "$upstream_only" -eq 0 ]; then
+    echo "upstream-intake: current (origin/$origin_default contains upstream/$upstream_default)"
+  elif [ "$fork_only" -eq 0 ]; then
+    echo "upstream-intake: pending: origin/$origin_default is $upstream_only commit(s) behind upstream/$upstream_default; open a reviewed intake PR into origin before rerunning"
+  else
+    echo "upstream-intake: pending: origin/$origin_default and upstream/$upstream_default diverged ($fork_only fork-only, $upstream_only upstream-only); open a reviewed intake PR into origin before rerunning"
+  fi
+}
+
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   usage
   exit 0
@@ -54,6 +107,7 @@ ff_target "$FM_ROOT" "firstmate" origin no no
 if [ "$FF_STATUS" = "updated" ] && [ -n "$FF_INSTR" ]; then
   reread_firstmate="yes"
 fi
+report_upstream_intake
 
 # --- secondmates -----------------------------------------------------------
 # An updated live secondmate is nudged whenever it advanced (nudge_requires_instr

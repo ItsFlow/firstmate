@@ -253,10 +253,11 @@ The refresh also prunes local branches whose remote is gone and that no worktree
 
 ## Self-updates stay safe
 
-`/updatefirstmate` fast-forwards the running firstmate repo and registered secondmate homes from `origin`, then re-reads updated instructions and nudges updated secondmates without touching project clones.
+`/updatefirstmate` fast-forwards the running firstmate repo and registered secondmate homes from the authoritative `origin`, then re-reads updated instructions and nudges updated secondmates without touching project clones.
+When a fetch-only `upstream` exists, the updater reports whether origin contains it, trails it, or has diverged; upstream changes become runnable only after a reviewed intake PR lands on origin.
 The update is fast-forward only: dirty, diverged, offline, and off-default targets are reported and left untouched.
 The origin-based updater and the local secondmate sync share the same guarded fast-forward helper; only the origin mode fetches.
-The mechanics are owned by the `/updatefirstmate` skill and firstmate's operating manual in [`AGENTS.md`](../AGENTS.md) (self-update).
+The mechanics and fork-intake boundary are owned by the `/updatefirstmate` skill and firstmate's operating manual in [`AGENTS.md`](../AGENTS.md) (self-update).
 
 ## Restart-proof
 

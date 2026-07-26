@@ -46,6 +46,17 @@ A `no-mistakes` project must have an `origin` remote and must complete the initi
 A `direct-PR` project needs an `origin` remote but skips no-mistakes initialization.
 A `local-only` project may have no remote and skips no-mistakes initialization.
 
+## Fork topology
+
+When the captain has a fork for private proving and an external source repository, clone or configure the captain fork as `origin`.
+Keep the external source as a remote named `upstream` with its fetch URL intact and its push URL set to a deliberately invalid value so an accidental `git push upstream` fails closed.
+Set `remote.pushDefault=origin`, and keep the default branch tracking `origin`.
+Initialize no-mistakes with the captain fork as its fork or push target, then verify that target with `no-mistakes status` before validation.
+Routine branches and PRs target `origin` only.
+Updates from upstream enter the captain fork through a reviewed PR whose base is the fork's default branch.
+Never target upstream with that PR, silently merge divergent histories, or force, rebase, stash, or discard work to make the histories align.
+Repository-specific self-update mechanics may fetch upstream for comparison, but runnable updates still install from origin after reviewed intake.
+
 ## Create a project
 
 Creating a GitHub repository is outward-facing.

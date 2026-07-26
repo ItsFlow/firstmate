@@ -6,6 +6,9 @@
 #   - The running firstmate repo (on its default branch) fast-forwards from
 #     origin; a leased secondmate home (detached HEAD on the default branch)
 #     fast-forwards the same way.
+#   - A fetch-only upstream is awareness and intake input, never an update base:
+#     changes are installed only after a reviewed intake lands on origin.
+#     Behind and diverged fork histories are reported without moving either.
 #   - FAST-FORWARD ONLY: a dirty, diverged, offline, or wrong-branch target is
 #     skipped and reported, never forced or stashed, so unlanded work survives.
 #   - The update is a single-parent fast-forward (never a merge commit) and a
@@ -85,6 +88,26 @@ bump_origin() {
   git -C "$w/seed" add -A
   git -C "$w/seed" commit -qm "bump-$mode"
   git -C "$w/seed" push -q origin main
+}
+
+add_upstream() {
+  local w=$1
+  git clone -q --bare "$w/origin.git" "$w/upstream.git"
+  git -C "$w/upstream.git" symbolic-ref HEAD refs/heads/main
+  git -C "$w/main" remote add upstream "file://$w/upstream.git"
+  git -C "$w/main" remote set-url --push upstream DISABLED
+  git -C "$w/main" fetch -q upstream
+  git -C "$w/main" remote set-head upstream main >/dev/null 2>&1 || true
+}
+
+bump_remote() {
+  local w=$1 remote=$2 message=$3 file=$4
+  local writer="$w/writer-$message"
+  git clone -q "file://$w/$remote.git" "$writer"
+  printf '%s\n' "$message" >> "$writer/$file"
+  git -C "$writer" add -A
+  git -C "$writer" commit -qm "$message"
+  git -C "$writer" push -q origin main
 }
 
 run_update() {
@@ -291,6 +314,54 @@ test_unsafe_secondmate_home_skipped_before_git_update() {
   pass "T11 unsafe secondmate home is not fast-forwarded"
 }
 
+test_upstream_requires_fork_intake_before_update() {
+  local w out before
+  w=$(new_world t12)
+  add_upstream "$w"
+  bump_remote "$w" upstream upstream-change README.md
+  before=$(git -C "$w/main" rev-parse HEAD)
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: already current" "origin remains the update base"
+  assert_contains "$out" "upstream-intake: pending: origin/main is 1 commit(s) behind upstream/main" \
+    "upstream-only change requires reviewed fork intake"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$before" ] \
+    || fail "upstream-only change moved the runnable checkout"
+
+  git -C "$w/upstream.git" push -q "file://$w/origin.git" main:main
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "accepted upstream change installs from origin"
+  assert_contains "$out" "upstream-intake: current" "fork contains upstream after intake"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$(git -C "$w/main" rev-parse origin/main)" ] \
+    || fail "accepted upstream change did not install from origin"
+  pass "T12 upstream changes install only after reviewed fork intake"
+}
+
+test_diverged_upstream_is_reported_without_merge() {
+  local w out fork_tip upstream_tip
+  w=$(new_world t13)
+  add_upstream "$w"
+  bump_remote "$w" origin internal-change AGENTS.md
+  bump_remote "$w" upstream upstream-change README.md
+  fork_tip=$(git -C "$w/origin.git" rev-parse main)
+  upstream_tip=$(git -C "$w/upstream.git" rev-parse main)
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: updated " "internal fork commit installs from origin"
+  assert_contains "$out" "upstream-intake: pending: origin/main and upstream/main diverged (1 fork-only, 1 upstream-only)" \
+    "diverged histories require reviewed integration"
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$fork_tip" ] \
+    || fail "diverged update did not preserve the fork tip"
+  git -C "$w/main" merge-base --is-ancestor "$upstream_tip" HEAD \
+    && fail "diverged update silently merged upstream"
+  [ "$(git -C "$w/main" rev-list --parents -n1 HEAD | wc -w | tr -d ' ')" -eq 2 ] \
+    || fail "diverged update created a merge commit"
+  pass "T13 diverged upstream is reported without merge, rewrite, or loss"
+}
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_dirty_secondmate_skipped
@@ -300,5 +371,7 @@ test_registry_backstop_dedup_and_self_exclusion
 test_firstmate_wrong_branch_skipped
 test_firstmate_detached_head_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
+test_upstream_requires_fork_intake_before_update
+test_diverged_upstream_is_reported_without_merge
 
 echo "# all fm-update tests passed"
