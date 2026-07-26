@@ -1,6 +1,6 @@
 ---
 name: updatefirstmate
-description: Self-update a running firstmate and its secondmates to the latest from origin. Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate"). Fast-forwards this firstmate repo's default branch and every secondmate home from the authoritative origin fork, reports whether a fetch-only upstream needs reviewed intake, then re-reads AGENTS.md and nudges updated secondmates.
+description: Self-update a running firstmate and its secondmates to the latest from authoritative origin. Use when the captain invokes /updatefirstmate (e.g. "/updatefirstmate", "update firstmate", "pull the latest firstmate"). Fast-forwards this firstmate repo's default branch and every secondmate home from origin, reports the fetch-only upstream intake relationship defined by project-management's fork topology, then re-reads AGENTS.md and nudges updated secondmates.
 user-invocable: true
 metadata:
   internal: true
@@ -18,10 +18,9 @@ It never forces, never creates a merge commit, never stashes, and advances a tar
 A tracked-files fast-forward leaves the gitignored operational dirs (data/, state/, config/, projects/, .no-mistakes/) untouched, so a secondmate's in-flight work is never disrupted.
 This touches only the firstmate repo and its own worktrees, never anything under `projects/`.
 
-`origin` is the only routine push, PR, and runnable update target.
-A fork-based installation keeps the public source as a fetch-only remote named `upstream`, with a disabled push URL.
-Upstream changes enter the origin fork through a reviewed PR against the fork, never through a PR against upstream and never through a silent local merge.
-After that intake PR lands, `/updatefirstmate` installs the resulting origin commit through the same fast-forward-only path as any internal change.
+When the firstmate repo uses the fork topology owned by `project-management`, `/updatefirstmate` still treats `origin` as the only runnable update base.
+It fetches `upstream` only to report whether reviewed intake is still needed.
+After that intake lands on origin, `/updatefirstmate` installs the resulting origin commit through the same fast-forward-only path as any internal change.
 When origin is behind or has diverged from upstream, the updater reports the exact relationship and leaves both histories untouched.
 
 ## What it does
@@ -38,9 +37,9 @@ When origin is behind or has diverged from upstream, the updater reports the exa
 2. **Handle an upstream intake report.**
    `upstream-intake: current` means the origin fork already contains the fetched upstream default branch.
    `upstream-intake: pending` means origin is behind or diverged and names the exact commit counts.
-   Open or review a PR whose base is the origin fork's default branch and whose head is upstream's default branch.
-   Do not target upstream, update either default branch directly, or locally merge, rebase, force, or stash to resolve it.
-   Stop after reporting the fork PR unless the captain separately approves its merge.
+   Use the reviewed fork-intake path owned by `project-management` if the captain asks you to prepare the intake PR.
+   Do not locally merge, rebase, force, stash, or discard work while handling the report.
+   Stop after reporting the needed intake unless the captain separately approves a merge.
    Rerun `/updatefirstmate` only after the reviewed intake lands on origin.
    `upstream-intake: not configured` is the supported maintainer or single-remote topology and needs no action.
 

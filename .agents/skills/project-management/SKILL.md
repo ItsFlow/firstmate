@@ -3,7 +3,7 @@ name: project-management
 description: >-
   Agent-only procedure for Firstmate project management.
   Use before adding, creating, removing, or initializing a project.
-  Owns project add, create, clone, remove, initialization, registry, delivery-mode, autonomy, and outward-consent decisions.
+  Owns project add, create, clone, remove, initialization, registry, delivery-mode, fork topology, autonomy, and outward-consent decisions.
 user-invocable: false
 metadata:
   internal: true
@@ -55,7 +55,7 @@ Initialize no-mistakes with the captain fork as its fork or push target, then ve
 Routine branches and PRs target `origin` only.
 Updates from upstream enter the captain fork through a reviewed PR whose base is the fork's default branch.
 Never target upstream with that PR, silently merge divergent histories, or force, rebase, stash, or discard work to make the histories align.
-Repository-specific self-update mechanics may fetch upstream for comparison, but runnable updates still install from origin after reviewed intake.
+For firstmate self-updates, load `/updatefirstmate`; it owns how runnable updates consume this topology.
 
 ## Create a project
 
