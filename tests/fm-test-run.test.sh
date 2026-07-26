@@ -108,6 +108,8 @@ init_changed_fixture_repo() {
     fm-pr-merge.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-afk-return.test.sh \
+    fm-inbox-view.test.sh \
+    fm-inbox-arm.test.sh \
     fm-bearings-snapshot.test.sh \
     fm-backend-cmux.test.sh \
     fm-backend-zellij.test.sh \
@@ -118,8 +120,11 @@ init_changed_fixture_repo() {
   : >"$repo/tests/lib.sh"
   : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
+  : >"$repo/bin/fm-inbox-view.sh"
+  : >"$repo/bin/fm-inbox-render.py"
+  : >"$repo/bin/fm-inbox-arm.sh"
+  : >"$repo/bin/fm-inbox-serve.sh"
   : >"$repo/bin/unmapped-source.sh"
-  printf '# .agents/skills/example/SKILL.md\n' >>"$repo/tests/fm-captain-translation-contract.test.sh"
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
   printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
@@ -162,12 +167,30 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" add bin/fm-supervisor-target-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm supervisor-change
 
+  printf '\n' >>"$repo/bin/fm-inbox-render.py"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-inbox-view.test.sh" \
+    "inbox renderer source selects inbox view coverage"
+  assert_not_contains "$listed" "tests/fm-bearings-snapshot.test.sh" \
+    "inbox renderer source must not pull unrelated bearings coverage"
+  git -C "$repo" add bin/fm-inbox-render.py
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm inbox-renderer-change
+
+  printf '\n' >>"$repo/bin/fm-inbox-serve.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-inbox-arm.test.sh" \
+    "inbox serve source selects inbox relay coverage"
+  assert_not_contains "$listed" "tests/fm-bearings-snapshot.test.sh" \
+    "inbox serve source must not pull unrelated bearings coverage"
+  git -C "$repo" add bin/fm-inbox-serve.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm inbox-serve-change
+
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"
   printf '\n' >>"$repo/.pi/extensions/fm-primary-pi-watch.ts"
   printf '\n' >>"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
-  assert_contains "$listed" "tests/fm-captain-translation-contract.test.sh" "skill source selects contract coverage"
+  assert_contains "$listed" "tests/fm-captain-translation-contract.test.sh" "skill source selects pure contract coverage"
   assert_contains "$listed" "tests/fm-cd-pretool-check.test.sh" "Claude and Pi source selects hook coverage"
   assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "Pi source selects watcher coverage"
   git -C "$repo" add .agents .claude .pi
@@ -366,6 +389,18 @@ test_ci_and_docs_call_the_owner() {
     || fail "CI shard 1 must invoke --lane portable-parallel-1"
   grep -Fq 'bin/fm-test-run.sh --lane portable-parallel-2' "$CI" \
     || fail "CI shard 2 must invoke --lane portable-parallel-2"
+  local shard job_body
+  for shard in 1 2; do
+    job_body=$(awk -v job="  tests-portable-parallel-$shard:" '
+      $0 == job { in_job=1; next }
+      in_job && /^  [a-zA-Z0-9_-]+:/ { exit }
+      in_job { print }
+    ' "$CI")
+    printf '%s\n' "$job_body" | grep -Fq 'npm install -g tasks-axi' \
+      || fail "CI portable parallel shard $shard must install tasks-axi"
+    printf '%s\n' "$job_body" | grep -Fq 'tasks-axi --version' \
+      || fail "CI portable parallel shard $shard must verify tasks-axi"
+  done
   grep -Fq 'bin/fm-test-run.sh --lane portable-serial' "$CI" \
     || fail "CI portable serial must invoke --lane portable-serial"
   grep -Fq 'bin/fm-test-run.sh --check-coverage' "$CI" \
