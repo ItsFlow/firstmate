@@ -21,6 +21,10 @@ It derives the open set from state firstmate already keeps durably - `data/backl
 It is therefore not a second status surface, and it is harness-agnostic and runtime-backend-agnostic: it never inspects a pane, an endpoint, or a harness.
 Backlog rows are read through `bin/fm-fleet-snapshot.sh --backlog-json`, which remains the one owner of backlog parsing.
 
+A backlog row is a decision when it carries a captain hold with a reason and no unresolved blocker, whatever the item's own `kind` says.
+The documented way to gate ordinary work on the captain is `tasks-axi hold <id> --reason "<reason>" --kind captain`, which leaves `kind` as `ship`, so the snapshot's narrower `captain_actionable` flag is false for exactly the threads this contract exists for.
+A captain hold whose blocker is still open is not answerable yet and stays a wait, so a future-gated hold does not nag the captain now.
+
 ## The durable captain briefing
 
 A title and a one-line reason cannot carry a decision, so every renderer could only truncate them.
@@ -30,7 +34,7 @@ A decision with no briefing still renders and is marked as not yet written, rath
 
 ## Where the captain sees it
 
-`bin/fm-attention.sh` is the single captain-facing place.
+`bin/fm-attention.sh` is the single place firstmate reads the open set from and relays into chat, so no reply has to reconstruct it.
 Its default view is plain English with no internal identifiers or vocabulary, so it can be relayed as written; `--brief` is the firstmate-facing form and does carry identifiers.
 
 The same set also reaches ordinary replies through three integrated paths, so nothing depends on remembering to look:
@@ -41,6 +45,10 @@ The same set also reaches ordinary replies through three integrated paths, so no
 - `bin/fm-supervision-instructions.sh` carries a one-line count in the emitted operating block.
 
 `/bearings` renders the same items in its Captain's Call and Charted Next sections.
+
+The [inbox board](inbox-board.md) is the other captain-facing surface for the same decisions, and the two are complementary rather than duplicates: this contract owns the derived set, its plain language, and how often firstmate is allowed to interrupt with it, while the board is where the captain answers one in a browser.
+They select decisions by the same rule - the captain hold itself, not the item's own `kind` - so the surfaces cannot disagree about what needs the captain.
+Keep that rule in step when either side changes it.
 
 ## Surfacing, deduplication, and false alarms
 

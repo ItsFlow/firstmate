@@ -17,8 +17,10 @@ Serve the board with this, not a bare `lavish-axi` call, so answers actually rea
 
 Every unblocked queued item with `hold_kind == "captain"` and a hold reason renders as a decision card, even when the backlog item's own `kind` is still `ship`.
 That deliberate selection keeps `tasks-axi hold --kind captain` threads visible when the snapshot's narrower `captain_actionable` flag would hide them.
+[`captain-attention.md`](captain-attention.md) selects decisions by the same rule and owns the plain-language contract and the interrupt budget behind them; keep the two in step.
 Each card leads with plain English: the question, what the captain is actually choosing, why it is a question, firstmate's recommendation, an optional research link, and a collapsed technical section.
-The plain-English text is not derivable from backlog metadata, so it comes from an optional captain-private cards file (`data/inbox-cards.md` by default; see `fm-inbox-view.sh --help` for the format).
+Card text comes from an optional captain-private cards file (`data/inbox-cards.md` by default; see `fm-inbox-view.sh --help` for the format), which stays the richer surface: it also carries a research link and a collapsed technical section.
+The plainer explanation a decision cannot go without is now recorded durably on the hold itself by `bin/fm-decision-hold.sh hold`, so a decision raised without a card is no longer wordless.
 A decision with no card still renders and is marked as not yet written, rather than presenting a raw hold note as if it were plain English.
 An item that is firstmate's own assumption rather than a choice the captain made is flagged as such on the card.
 

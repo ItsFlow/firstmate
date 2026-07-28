@@ -267,9 +267,22 @@ fm_attention_json() {  # <fm-home>
            options:fields($lines; $f_option),
            recommendation:field($lines; $f_recommend)}
         end;
+    # Selected on the captain hold itself, not on the snapshot captain_actionable
+    # flag, which also requires the item own kind to be "captain". The documented
+    # way to gate an ordinary work item on the captain is
+    # "tasks-axi hold <id> --reason ... --kind captain", which leaves kind as
+    # ship, so that flag is false for exactly the threads this contract exists
+    # for and they would render as routine delays. A captain hold that still has
+    # unresolved blockers is not answerable yet and stays a wait below.
+    def is_captain_decision:
+      .structured == true
+      and (.state == "queued" or .state == "in_flight")
+      and .hold_kind == "captain"
+      and .hold_reason != null
+      and ((.unresolved_blocker_ids // []) | length) == 0;
     def backlog_decisions:
       [ $backlog.records[]?
-        | select(.structured == true and .captain_actionable == true)
+        | select(is_captain_decision)
         | {class:"decision",
            identity:("decision:" + .id),
            source:"captain-hold",
@@ -287,7 +300,7 @@ fm_attention_json() {  # <fm-home>
       [ $backlog.records[]?
         | select(.structured == true
                  and (.state == "queued" or .state == "in_flight")
-                 and .captain_actionable != true
+                 and (is_captain_decision | not)
                  and ((.hold_reason != null and .hold_kind != null)
                       or ((.unresolved_blocker_ids // []) | length) > 0))
         | {class:"wait",

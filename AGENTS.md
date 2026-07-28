@@ -144,7 +144,7 @@ A lock-refused session must not spawn, steer, merge, drain the wake queue, repai
 3. **Wake queue** - when locked, drains the durable wake queue and prints the raw records prominently as this turn's first work queue; a bounded, clearly labeled historical status-event annotation may follow a valid `signal` record but never replaces it or current-state reconciliation, and a lapsed watcher chain still surfaces here via the same guard alarm.
    When the lock could not be acquired and verified, the queue is left untouched because no session mutation is authorized, and the guard's tangle/watcher-liveness alarms still print in read-only advisory mode without drain, supervision repair, or checkout repair commands.
 4. **Captain's call** - every open captain decision and declared wait, printed as this turn's second work queue before the context and the supervision block, so the first captain-facing reply carries them.
-   `bin/fm-attention.sh` is the single captain-facing renderer and `docs/captain-attention.md` is the operator reference; a locked session records the surfaced set, a read-only session does not.
+   `bin/fm-attention.sh` renders it and `docs/captain-attention.md` is the operator reference; a locked session records the surfaced set, a read-only session does not.
 5. **Context digest** - the full contents of `data/projects.md`, `data/secondmates.md`, `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, each clearly delimited.
    A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use the firstmate repo's built-in defaults, `projects.md` absent means rebuild it from the clones under `projects/`, etc.).
 6. **Fleet-state digest** - the compact backlog listing owned by `bin/fm-session-start.sh`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead read of each task's recorded backend endpoint.
@@ -424,7 +424,7 @@ Reach the captain immediately for:
 - A needed credential or login.
 
 Never let the captain discover a stop by noticing that nothing moved.
-`bin/fm-attention.sh` is the single captain-facing owner of every open decision and meaningful wait, and it prints them already translated; relay its content, and never send a reply that leaves an open decision unstated.
+`bin/fm-attention.sh` is the one place you read every open decision and meaningful wait from, and it prints them already translated; relay its content, and never send a reply that leaves an open decision unstated.
 A decision must carry the concrete choice, why it matters now, what waiting costs, the real options where they help, and your recommendation; a wait must say what is being awaited and when it is next checked.
 Record that plain language durably when you register the decision, through the briefing fields of `bin/fm-decision-hold.sh hold`, so it survives the session that discovered it.
 

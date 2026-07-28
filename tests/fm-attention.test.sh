@@ -140,6 +140,35 @@ test_briefed_decision_renders_concretely() {
   pass "a briefed captain decision renders the choice, the stakes, the options, and a recommendation"
 }
 
+# The documented way to gate ordinary work on the captain is
+# "tasks-axi hold <id> --reason ... --kind captain", which leaves the item own
+# kind as ship. Selecting on the snapshot captain_actionable flag therefore
+# missed exactly the threads this contract exists for and rendered the real
+# fork-sync case as a routine delay with no captain action attached.
+test_a_captain_gated_work_item_is_a_decision_not_a_delay() {
+  local home out
+  home=$(make_home captain-gated)
+  add_row "$home" Queued \
+    '- [ ] sample-board - Ship the live task board (repo: sample) (kind: ship) (hold: The fork main must be synced with upstream before this can be rebased) (hold-kind: captain)'
+  out=$(attention "$home" --no-mark)
+  assert_contains "$out" '1 decision needs you' \
+    "a captain-held ship item must count as a decision"
+  assert_contains "$out" 'NEEDS YOUR DECISION' "the decision section is missing"
+  assert_not_contains "$out" 'WAITING ON SOMETHING ELSE' \
+    "a captain-held item must not be laundered into a routine delay"
+
+  # A captain hold whose blocker is still open is not answerable yet, so it
+  # stays a wait; otherwise every future-gated hold would nag the captain now.
+  home=$(make_home captain-gated-blocked)
+  add_row "$home" Queued \
+    '- [ ] sample-board - Ship the live task board blocked-by: sample-other (repo: sample) (kind: ship) (hold: The fork main must be synced first) (hold-kind: captain)'
+  out=$(attention "$home" --no-mark)
+  assert_contains "$out" '0 decisions need you' \
+    "a captain hold with an unresolved blocker is not yet answerable"
+  assert_contains "$out" 'WAITING ON SOMETHING ELSE' "the blocked hold must still be listed as a wait"
+  pass "a captain-gated work item is a decision, while a still-blocked one waits"
+}
+
 test_unbriefed_decision_is_honest_about_missing_language() {
   local home out
   home=$(make_home unbriefed)
@@ -455,6 +484,7 @@ test_empty_home_says_so_plainly() {
 
 test_hold_reason_keeps_its_full_text
 test_briefed_decision_renders_concretely
+test_a_captain_gated_work_item_is_a_decision_not_a_delay
 test_unbriefed_decision_is_honest_about_missing_language
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_repeated_wait_escalates_to_a_decision

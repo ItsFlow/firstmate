@@ -133,9 +133,11 @@ else
   "$SCRIPT_DIR/fm-fleet-snapshot.sh" --json > "$SNAPSHOT" || die "fleet snapshot failed"
 fi
 
-# Untruncated captain-hold text. fm-fleet-snapshot's metadata capture stops at
-# the first comma, so a hold reason carrying options is unreadable from the
-# snapshot alone; tasks-axi is the authority for the full text.
+# Untruncated captain-hold text. fm-fleet-snapshot's metadata capture no longer
+# stops at the first comma, but its aggregated output still length-caps a hold
+# reason and carries no body at all, so the durable captain briefing written by
+# fm-decision-hold.sh is unreachable from the snapshot alone; tasks-axi is the
+# authority for the full text.
 FULLDIR="$TMP/full"
 mkdir -p "$FULLDIR"
 if [ "$FULL_TEXT" -eq 1 ] && command -v tasks-axi >/dev/null 2>&1; then
