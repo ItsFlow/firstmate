@@ -69,7 +69,7 @@ write_fixture() {  # <home>
 - [ ] pr-task - PR Task (repo: alpha) (kind: ship) (since 2026-07-05)
 
 ## Done
-- [x] shipped-task - Shipped Task https://github.com/kunchenguid/firstmate/pull/7 (repo: alpha) (kind: ship) (merged 2026-07-06)
+- [x] shipped-task - Shipped Task https://github.com/kunchenguid/firstmate/pull/7 (repo: alpha) (kind: ship) (merged 2026-07-06<b>unsafe</b>)
 EOF
   fm_write_meta "$home/state/pr-task.meta" \
     "window=firstmate:fm-pr-task" \
@@ -228,6 +228,24 @@ SH
   assert_not_contains "$review" "already unknown" \
     "an unknown verification result must not be classified as stale"
   pass "unknown PR verification stays in Review and merge"
+}
+
+test_shipped_completion_metadata_is_escaped() {
+  local home fakebin board shipped
+  home=$(make_home shippedescape)
+  write_fixture "$home"
+  fakebin=$(make_fakebin "$home")
+  board=$home/board.html
+  PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" "$board" >/dev/null 2>&1 \
+    || fail "generator must succeed"
+  shipped=$(section_of "$board" shipped)
+  assert_contains "$shipped" "2026-07-06&lt;b&gt;unsafe&lt;/b&gt;" \
+    "completion metadata must be escaped in shipped rows"
+  assert_not_contains "$shipped" "2026-07-06<b>unsafe</b>" \
+    "completion metadata must not render as markup"
+  assert_contains "$shipped" '<a href="https://github.com/kunchenguid/firstmate/pull/7"' \
+    "the shipped pull request link must remain an anchor"
+  pass "shipped completion metadata escapes while PR links render"
 }
 
 test_cards_render_and_absence_is_declared() {
@@ -417,6 +435,7 @@ test_selects_captain_holds_regardless_of_kind
 test_uses_untruncated_hold_text
 test_recorded_pr_is_marked_unverified
 test_unknown_pr_verification_stays_reviewable
+test_shipped_completion_metadata_is_escaped
 test_cards_render_and_absence_is_declared
 test_answer_control_queues_once_per_question
 test_free_text_answer_is_first_class

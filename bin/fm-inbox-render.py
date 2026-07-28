@@ -842,15 +842,16 @@ def render_decision(view):
     return "".join(parts)
 
 
-def render_row(project, who, what, sub=""):
+def render_row(project, who, what, sub="", sub_html=False):
+    rendered_sub = sub if sub_html else esc(sub)
     return (
         '<li class="row" data-project="%s"><span class="who">%s</span>'
         '<span class="what"><span class="t">%s</span>%s</span></li>'
         % (
             esc(project),
             esc(who),
-            what,
-            '<span class="sub">%s</span>' % sub if sub else "",
+            esc(what),
+            '<span class="sub">%s</span>' % rendered_sub if rendered_sub else "",
         )
     )
 
@@ -921,9 +922,10 @@ def render(model, snap, home, pr_verified):
             render_row(
                 row["project"],
                 row["project"],
-                esc(row["title"]),
+                row["title"],
                 '<a href="%s" rel="noreferrer">%s</a> &middot; %s'
                 % (esc(row["url"]), esc(row["url"]), esc(note)),
+                sub_html=True,
             )
         )
     if rows:
@@ -973,8 +975,8 @@ def render(model, snap, home, pr_verified):
             render_row(
                 area_of(record, task),
                 area_of(record, task),
-                esc(record.get("title") or record.get("id")),
-                esc("%s, started %s" % (state, record.get("since") or "recently")),
+                record.get("title") or record.get("id"),
+                "%s, started %s" % (state, record.get("since") or "recently"),
             )
         )
     blocks.append(
@@ -1005,8 +1007,8 @@ def render(model, snap, home, pr_verified):
             render_row(
                 area_of(record, task),
                 area_of(record, task),
-                esc(record.get("title") or record.get("id")),
-                esc(sub),
+                record.get("title") or record.get("id"),
+                sub,
             )
         )
     blocks.append(
@@ -1028,7 +1030,8 @@ def render(model, snap, home, pr_verified):
         date = (record.get("completion") or {}).get("date") or record.get("since") or ""
         sub = "%s %s" % (COMPLETION_LABELS.get(verb, verb), date)
         if record.get("pr_url"):
-            sub += ' &middot; <a href="%s" rel="noreferrer">%s</a>' % (
+            sub = '%s &middot; <a href="%s" rel="noreferrer">%s</a>' % (
+                esc(sub),
                 esc(record["pr_url"]),
                 esc(record["pr_url"]),
             )
@@ -1036,8 +1039,9 @@ def render(model, snap, home, pr_verified):
                 render_row(
                     area_of(record, task),
                     area_of(record, task),
-                    esc(record.get("title") or record.get("id")),
+                    record.get("title") or record.get("id"),
                     sub,
+                    sub_html=True,
                 )
             )
         else:
@@ -1045,8 +1049,8 @@ def render(model, snap, home, pr_verified):
                 render_row(
                     area_of(record, task),
                     area_of(record, task),
-                    esc(record.get("title") or record.get("id")),
-                    esc(sub),
+                    record.get("title") or record.get("id"),
+                    sub,
                 )
             )
     blocks.append(
@@ -1067,8 +1071,8 @@ def render(model, snap, home, pr_verified):
             render_row(
                 area_of(record, task),
                 area_of(record, task),
-                esc(record.get("title") or record.get("id")),
-                esc("; ".join(reasons)),
+                record.get("title") or record.get("id"),
+                "; ".join(reasons),
             )
         )
     blocks.append(
