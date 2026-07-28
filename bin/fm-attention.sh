@@ -14,22 +14,22 @@
 # clearing is promoted to a decision, because it is no longer resolving on its
 # own. That promotion is derived from the event fold, never from the wording.
 #
-# RENDERING IS SURFACING. Printing (the default view or --brief) records the
-# current set's digest in state/.captain-attention, so the guards stop
+# RENDERING IS SURFACING. Printing the default view records the current set's
+# digest in state/.captain-attention, so the guards stop
 # interrupting for a set that has already reached a captain-facing surface. An
 # ordinary read that changes nothing therefore never becomes a false alarm, and
-# an item that is answered simply drops out. --json and --status never mark.
-# Open items stay rendered until they are resolved; the marker bounds the
+# an item that is answered simply drops out. --brief, --json, and --status never
+# mark. Open items stay rendered until they are resolved; the marker bounds the
 # interrupt, not the ledger.
 #
 # The default view is captain-safe plain English under AGENTS.md section 9: it
 # carries no internal identifiers or vocabulary and can be relayed as written.
-# --brief is the firstmate-facing form and does carry identifiers, so it belongs
-# in guard banners and the session-start digest, never in captain chat.
+# --brief is the firstmate-facing form and does carry identifiers, so it is a
+# read-only diagnostic, never a captain-facing surface.
 #
 # Usage:
 #   fm-attention.sh                 captain-facing view (marks surfaced)
-#   fm-attention.sh --brief         one line per item, with identifiers (marks surfaced)
+#   fm-attention.sh --brief         one line per item, with identifiers (read-only)
 #   fm-attention.sh --json          the raw record array (read-only)
 #   fm-attention.sh --status        counts and change flags (read-only)
 #   fm-attention.sh --no-mark       render without recording the digest
@@ -139,7 +139,7 @@ field() {  # <index> <jq-path>
 
 render_view() {
   local total=$FM_ATT_COUNT n=$FM_ATT_DECISIONS w=$FM_ATT_WAITS i num=0
-  local class headline choice why cost recommend detail awaiting briefed escalated redeclares next opts
+  local class headline choice why cost recommend detail awaiting briefed escalated redeclares next opts missing
 
   printf "CAPTAIN'S CALL\n"
   if [ "$total" -eq 0 ]; then
@@ -188,6 +188,16 @@ $opts
 EOF
         fi
         [ -z "$recommend" ] || { printf '   Recommended:\n'; wrap 5 "$recommend"; }
+        missing=$(printf '%s' "$FM_ATT_JSON" | jq -r --argjson i "$i" '.[$i].briefing_missing[]?' 2>/dev/null)
+        if [ -n "$missing" ]; then
+          printf '   Still needs:\n'
+          while IFS= read -r missing; do
+            [ -n "$missing" ] || continue
+            wrap_prefixed '     - ' 7 "$missing"
+          done <<EOF
+$missing
+EOF
+        fi
       else
         printf '   No plain-language explanation has been written for this one yet.\n'
         printf '   What was recorded:\n'
@@ -259,7 +269,6 @@ case "$MODE" in
     ;;
   brief)
     render_brief
-    [ "$MARK" -eq 1 ] && fm_attention_mark_surfaced "$STATE" "$FM_ATT_DIGEST" "$FM_ATT_DECISION_DIGEST"
     ;;
   *)
     render_view

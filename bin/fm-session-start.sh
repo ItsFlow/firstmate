@@ -324,16 +324,15 @@ fi
 # the session that owns the home.
 subsection "CAPTAIN'S CALL"
 if [ "$READ_ONLY" -eq 1 ]; then
-  ATTENTION_OUT=$("$SCRIPT_DIR/fm-attention.sh" --brief --no-mark 2>&1)
+  ATTENTION_OUT=$("$SCRIPT_DIR/fm-attention.sh" --no-mark 2>&1)
 else
-  ATTENTION_OUT=$("$SCRIPT_DIR/fm-attention.sh" --brief 2>&1)
+  ATTENTION_OUT=$("$SCRIPT_DIR/fm-attention.sh" 2>&1)
 fi
 if [ -n "$ATTENTION_OUT" ]; then
   printf '%s\n' "$ATTENTION_OUT"
 else
   printf '(unavailable)\n'
 fi
-printf 'Relay every open decision and wait to the captain in plain language: bin/fm-attention.sh\n'
 
 # --- 5. supervision operating instructions ----------------------------------
 AFK_PRESENT=0

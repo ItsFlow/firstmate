@@ -34,9 +34,9 @@
 #      surface (the captain's-call stop, bin/fm-attention-lib.sh).
 # The second only runs on the paths where the first ALLOWS, so the two never
 # stack and the load-bearing watcher alarm keeps priority. It is bounded by
-# construction rather than by a budget: it records the surfaced digest before
-# blocking, so one distinct set of open decisions costs at most one forced
-# continuation, on every harness.
+# construction rather than by a budget: it renders the captain-facing view before
+# blocking, and that render records the surfaced digest, so one distinct set of
+# open decisions costs at most one forced continuation, on every harness.
 #
 # Loop-guard, codex/Grok (default) mode: never block twice in the same turn.
 # Codex uses stop_hook_active and Grok uses stopHookActive; typed camel-case
@@ -165,12 +165,11 @@ budget_reset() {
 # script's exit status gets the behavior; nothing here is harness-specific.
 block_attention() {
   local rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-  fm_attention_mark_surfaced "$STATE" "$FM_ATT_DIGEST" "$FM_ATT_DECISION_DIGEST"
   {
     printf '●%s\n' "$rule"
     printf "●  TURN WOULD END WITHOUT TELLING THE CAPTAIN - %s DECISION(S) ARE WAITING ON HIM\n" \
       "$FM_ATT_DECISIONS"
-    "$SCRIPT_DIR/fm-attention.sh" --brief --no-mark 2>/dev/null | sed 's/^/●  /'
+    "$SCRIPT_DIR/fm-attention.sh" 2>/dev/null | sed 's/^/●  /'
     printf '●  Relay each one to the captain in plain language before ending this turn:\n'
     printf '●  the concrete choice, why it matters now, what waiting costs, and your recommendation.\n'
     printf '●  bin/fm-attention.sh prints exactly that, already captain-safe.\n'

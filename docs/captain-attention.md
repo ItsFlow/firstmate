@@ -31,11 +31,12 @@ A title and a one-line reason cannot carry a decision, so every renderer could o
 `bin/fm-decision-hold.sh hold` accepts `--choice`, `--why-now`, `--cost-of-waiting`, repeatable `--option`, and `--recommend`, and stores that plain language in the hold's own durable body.
 Supplying any briefing flag rewrites the briefing and preserves unrecognized body lines; supplying none leaves an existing briefing untouched, so an idempotent retry never erases one.
 A decision with no briefing still renders and is marked as not yet written, rather than presenting a raw operational note as if it were plain language.
+A partial briefing renders the fields that were written and names the missing ones.
 
 ## Where the captain sees it
 
 `bin/fm-attention.sh` is the single place firstmate reads the open set from and relays into chat, so no reply has to reconstruct it.
-Its default view is plain English with no internal identifiers or vocabulary, so it can be relayed as written; `--brief` is the firstmate-facing form and does carry identifiers.
+Its default view is plain English with no internal identifiers or vocabulary, so it can be relayed as written; `--brief` is the firstmate-facing form and does carry identifiers, and is read-only.
 
 The same set also reaches ordinary replies through three integrated paths, so nothing depends on remembering to look:
 
@@ -53,11 +54,11 @@ Keep that rule in step when either side changes it.
 ## Surfacing, deduplication, and false alarms
 
 `state/.captain-attention` records the digest of the set most recently rendered to a captain-facing surface.
-Rendering is surfacing: printing records the digest as a side effect, so an ordinary read that changes nothing can never become an alarm.
-Identities carry no prose, so a delay re-reported hourly with new wording stays one item and surfaces once.
+Rendering the default captain-facing view is surfacing: printing it records the digest as a side effect, so an ordinary read that changes nothing can never become an alarm.
+Identities carry no prose, so a delay re-reported hourly with new wording stays one item and surfaces once; if that delay clears and later opens again, its generation changes and it surfaces again.
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 
-The turn-end stop is bounded by construction rather than by a budget: it records the surfaced digest before blocking, so one distinct set of open decisions costs at most one forced continuation on any harness.
+The turn-end stop is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
 Declared waits never stop a turn.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables that stop without touching the watcher-liveness backstop, and `FM_GUARD_NO_ATTENTION=1` suppresses the guard section.
 

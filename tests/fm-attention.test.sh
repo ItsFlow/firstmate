@@ -182,6 +182,52 @@ test_unbriefed_decision_is_honest_about_missing_language() {
   pass "a decision with no captain briefing renders honestly instead of faking plain language"
 }
 
+test_partial_briefing_renders_recorded_fields_and_names_missing_ones() {
+  local home out json
+  home=$(make_home partial-briefing)
+  cat > "$home/data/backlog.md" <<'EOF'
+# Backlog
+
+## In flight
+
+## Queued
+- [ ] partial-decision - Pick the release path (repo: sample) (kind: captain) (since 2026-07-28) (hold: release path needs captain input) (hold-kind: captain)
+  Captain briefing v1:
+  Recommended: Use the staged rollout.
+
+## Done
+EOF
+  out=$(attention "$home" --no-mark)
+  assert_contains "$out" 'Recommended:' "a partial briefing must render the field that was written"
+  assert_contains "$out" 'Use the staged rollout.' "a partial briefing must render the recorded recommendation"
+  assert_contains "$out" 'Still needs:' "a partial briefing must name missing fields"
+  assert_contains "$out" 'The choice' "a partial briefing must name the missing choice"
+  assert_contains "$out" 'Why it matters now' "a partial briefing must name the missing timing/stakes field"
+  assert_contains "$out" 'If this waits' "a partial briefing must name the missing waiting-cost field"
+  assert_not_contains "$out" 'No plain-language explanation has been written for this one yet.' \
+    "a briefing with recognized fields must not fall back to the no-briefing branch"
+  json=$(attention "$home" --no-mark --json | jq -r '.[0] | "\(.briefed)|\(.recommendation)|\(.briefing_missing | join(","))"')
+  assert_contains "$json" 'true|Use the staged rollout.|' "the JSON contract must expose the partial briefing"
+
+  home=$(make_home header-only-briefing)
+  cat > "$home/data/backlog.md" <<'EOF'
+# Backlog
+
+## In flight
+
+## Queued
+- [ ] header-only - Pick the launch window (repo: sample) (kind: captain) (since 2026-07-28) (hold: launch window needs captain input) (hold-kind: captain)
+  Captain briefing v1:
+
+## Done
+EOF
+  out=$(attention "$home" --no-mark)
+  assert_contains "$out" 'No plain-language explanation has been written for this one yet.' \
+    "a briefing header with no recognized fields must still use the no-briefing branch"
+  assert_not_contains "$out" 'Still needs:' "the no-briefing branch must not claim a partial briefing exists"
+  pass "a partial captain briefing renders written fields and names missing ones"
+}
+
 # --- waits: what is awaited, and when it is next checked ---------------------
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked() {
   local home out
@@ -268,6 +314,76 @@ test_identities_ignore_wording_so_repeats_do_not_re_alarm() {
   printf 'paused: third recheck unchanged, worded differently again\n' >> "$home/state/task-board.status"
   assert_not_contains "$(run_guard "$home")" "CAPTAIN'S CALL" "a re-worded repeat must not surface again"
   pass "attention identities ignore wording, so a repeated delay surfaces once"
+}
+
+test_reopened_status_items_get_new_generation_identity() {
+  local home first second third out
+  home=$(make_home wait-generation)
+  add_row "$home" 'In flight' \
+    '- [ ] task-board - Live watchable view of the task and priority list (repo: sample) (kind: ship) (since 2026-07-23)'
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=ship"
+  printf 'paused: first external wait\n' > "$home/state/task-board.status"
+  touch "$home/state/.last-watcher-beat"
+
+  first=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
+  attention "$home" >/dev/null
+  printf 'working: unblocked for implementation\npaused: second external wait\n' >> "$home/state/task-board.status"
+  second=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
+  [ "$first" != "$second" ] || fail "a reopened wait reused its previous identity: $first"
+  assert_contains "$second" 'wait:task-board:default:2' "a reopened wait must carry a new generation"
+  assert_contains "$(attention "$home" --no-mark --status)" 'new=true' \
+    "a reopened wait must re-surface even if the earlier generation was surfaced"
+  attention "$home" >/dev/null
+  printf 'paused: same wait with new wording\n' >> "$home/state/task-board.status"
+  third=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
+  [ "$second" = "$third" ] || fail "a still-open wait changed identity on rewording: $second vs $third"
+  out=$(attention "$home" --no-mark --status)
+  assert_contains "$out" 'new=false' "a still-open wait must stay deduped after rewording"
+
+  home=$(make_home decision-generation)
+  fm_write_meta "$home/state/api-shape.meta" \
+    "window=fixture:fm-api-shape" "project=$home/projects/sample" "kind=ship"
+  printf 'needs-decision: choose the API shape\n' > "$home/state/api-shape.status"
+  first=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
+  attention "$home" >/dev/null
+  printf 'resolved: the first shape was chosen\nneeds-decision: choose the migration shape\n' >> "$home/state/api-shape.status"
+  second=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
+  [ "$first" != "$second" ] || fail "a reopened status decision reused its previous identity: $first"
+  assert_contains "$second" 'decision:api-shape:default:2' \
+    "a reopened status decision must carry a new generation"
+  pass "reopened status decisions and waits carry a new generation identity"
+}
+
+test_brief_form_never_spends_captain_surface_marker() {
+  local home out status
+  home=$(make_primary_home brief-no-mark)
+  add_row "$home" Queued \
+    '- [ ] sample-decision-x - Approve the worker installs (repo: sample) (kind: captain) (since 2026-07-28) (hold: the machine needs approval before workers run there) (hold-kind: captain)'
+  attention "$home" --brief >/dev/null
+  assert_absent "$home/state/.captain-attention" \
+    "the firstmate-facing brief form must not record the surfaced digest"
+
+  out=$(run_turnend "$home"); status=$?
+  expect_code 2 "$status" "brief output must not satisfy the captain-facing turn-end stop"
+  assert_contains "$out" 'NEEDS YOUR DECISION' "the turn-end stop must render the captain-safe view"
+  out=$(run_turnend "$home"); status=$?
+  expect_code 0 "$status" "the captain-safe turn-end render must record the surfaced digest"
+  [ -z "$out" ] || fail "the second turn end produced output: $out"
+  pass "the brief form never spends the captain-facing surface marker"
+}
+
+test_guard_banner_uses_captain_safe_rendering_to_mark() {
+  local home out status
+  home=$(make_home guard-captain-safe)
+  add_row "$home" Queued \
+    '- [ ] sample-decision-x - Approve the change (repo: sample) (kind: captain) (since 2026-07-28) (hold: an operational note that is not plain language) (hold-kind: captain)'
+  out=$(run_guard "$home")
+  assert_contains "$out" 'NEEDS YOUR DECISION' "the guard banner must include the captain-safe decision section"
+  assert_not_contains "$out" 'sample-decision-x' "the guard banner must not use the identifier-only brief form"
+  status=$(attention "$home" --no-mark --status)
+  assert_contains "$status" 'new=false' "the guard must let the captain-safe render spend the marker"
+  pass "the guard banner renders the captain-safe view and records that surface"
 }
 
 test_ordinary_reads_do_not_become_false_alarms() {
@@ -486,9 +602,13 @@ test_hold_reason_keeps_its_full_text
 test_briefed_decision_renders_concretely
 test_a_captain_gated_work_item_is_a_decision_not_a_delay
 test_unbriefed_decision_is_honest_about_missing_language
+test_partial_briefing_renders_recorded_fields_and_names_missing_ones
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_repeated_wait_escalates_to_a_decision
 test_identities_ignore_wording_so_repeats_do_not_re_alarm
+test_reopened_status_items_get_new_generation_identity
+test_brief_form_never_spends_captain_surface_marker
+test_guard_banner_uses_captain_safe_rendering_to_mark
 test_ordinary_reads_do_not_become_false_alarms
 test_ledger_keeps_showing_an_open_item_after_it_was_surfaced
 test_resolution_clears_the_item

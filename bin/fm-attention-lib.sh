@@ -37,13 +37,14 @@
 # IDENTITY AND DEDUPLICATION
 # Every record carries a stable, TEXT-FREE identity:
 #   decision:<hold-id>            a captain-held backlog item
-#   decision:<task-id>:<key>      an open keyed status decision
-#   wait:<task-id>:<key>          an open keyed status wait
+#   decision:<task-id>:<key>:<generation>  an open keyed status decision
+#   wait:<task-id>:<key>:<generation>      an open keyed status wait
 #   wait:<backlog-id>             a held backlog row waiting on other work
 # Identities exclude all prose deliberately: a wait re-declared hourly with
-# slightly different wording keeps ONE identity, so a standing delay is surfaced
-# once rather than every hour. An escalated wait keeps its wait identity and only
-# changes class, so escalation itself surfaces exactly once.
+# slightly different wording keeps ONE identity while it stays open, so a
+# standing delay is surfaced once rather than every hour. If that wait clears and
+# later opens again, the generation changes. An escalated wait keeps its wait
+# identity and only changes class, so escalation itself surfaces exactly once.
 #
 # SURFACING
 # state/.captain-attention records the digest of the set most recently rendered
@@ -138,28 +139,6 @@ fm_attention_brief_lines() {
 
 # --- status-side collection --------------------------------------------------
 
-# Count how many times the currently open wait phase for <key> has been
-# re-declared in <status-file>. A non-wait event carrying the same key resets the
-# count, so only the CURRENT uninterrupted run of declarations is counted.
-fm_attention_wait_redeclares() {  # <status-file> <key>
-  local f=$1 want=$2 line verb key pause n=0 stripped
-  [ -f "$f" ] || { printf '0'; return 0; }
-  pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
-  while IFS= read -r line || [ -n "$line" ]; do
-    stripped=${line//[[:space:]]/}
-    [ -n "$stripped" ] || continue
-    verb=$(status_line_verb "$line")
-    key=$(_fm_decision_key "$line") || continue
-    [ "$key" = "$want" ] || continue
-    if [ "$verb" = "$pause" ]; then
-      n=$((n + 1))
-    else
-      n=0
-    fi
-  done < "$f"
-  printf '%s' "$n"
-}
-
 # Seconds until the supervision cycle next re-checks a declared wait, or -1 when
 # nothing is watching. bin/fm-classify-lib.sh owns the cadence constant; this
 # only does the arithmetic against the status log's last write.
@@ -188,14 +167,65 @@ fm_attention_wait_next_check() {  # <status-file> <state-dir>
   printf '%s' "$(( m + cadence - now ))"
 }
 
+_fm_attention_drop_key() {  # <open-set> <key>
+  local set=$1 key=$2 line out=''
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      "$key"$'\t'*) : ;;
+      *) out="${out}${line}"$'\n' ;;
+    esac
+  done <<EOF
+$set
+EOF
+  printf '%s' "$out"
+}
+
+_fm_attention_row_for_key() {  # <open-set> <key>
+  local set=$1 key=$2 line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      "$key"$'\t'*) printf '%s' "$line"; return 0 ;;
+    esac
+  done <<EOF
+$set
+EOF
+  return 1
+}
+
+_fm_attention_generation_get() {  # <generation-set> <key>
+  local set=$1 key=$2 line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      "$key"$'\t'*) printf '%s' "${line#*$'\t'}"; return 0 ;;
+    esac
+  done <<EOF
+$set
+EOF
+  printf '0'
+}
+
+_fm_attention_generation_set() {  # <generation-set> <key> <generation>
+  local set=$1 key=$2 gen=$3
+  set=$(_fm_attention_drop_key "$set" "$key")
+  [ -n "$set" ] && set="${set}"$'\n'
+  printf '%s%s\t%s\n' "$set" "$key" "$gen"
+}
+
 # Emit one TAB-separated status-derived row per open decision or wait:
-#   <class> <task-id> <key> <verb> <redeclares> <next-check-secs> <note>
+#   <class> <task-id> <key> <generation> <verb> <redeclares> <next-check-secs> <note>
 # Only tasks with live metadata are considered: an id whose metadata is gone was
 # torn down, and any decision it still owed was transferred to a durable backlog
 # hold by bin/fm-decision-hold.sh. Terminal tasks are skipped for the same reason
 # origin_open_decisions skips them.
 fm_attention_status_rows() {  # <state-dir>
-  local state=$1 meta id status kind last verb key note n next
+  local state=$1 meta id status kind last verb key note n next line stripped pause resolve held
+  local decisions waits decision_gens wait_gens existing gen old_key old_verb old_gen old_n old_note
+  pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
+  resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+  held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   for meta in "$state"/*.meta; do
     [ -f "$meta" ] || continue
     id=$(basename "$meta" .meta)
@@ -208,20 +238,75 @@ fm_attention_status_rows() {  # <state-dir>
       verb=$(status_line_verb "$last")
       case "$verb" in done|failed) continue ;; esac
     fi
-    while IFS=$'\t' read -r key verb note; do
+    decisions=''
+    waits=''
+    decision_gens=''
+    wait_gens=''
+    while IFS= read -r line || [ -n "$line" ]; do
+      stripped=${line//[[:space:]]/}
+      [ -n "$stripped" ] || continue
+      verb=$(status_line_verb "$line")
+      key=$(_fm_decision_key "$line") || continue
+      note=$(status_line_note "$line")
+      case "$verb" in
+        needs-decision|blocked)
+          existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
+          if [ -n "$existing" ]; then
+            IFS=$'\t' read -r old_key old_verb gen old_note <<EOF
+$existing
+EOF
+          else
+            gen=$(_fm_attention_generation_get "$decision_gens" "$key")
+            gen=$((gen + 1))
+            decision_gens=$(_fm_attention_generation_set "$decision_gens" "$key" "$gen")
+          fi
+          decisions=$(_fm_attention_drop_key "$decisions" "$key")
+          [ -n "$decisions" ] && decisions="${decisions}"$'\n'
+          decisions="${decisions}${key}"$'\t'"${verb}"$'\t'"${gen}"$'\t'"${note}"$'\n'
+          waits=$(_fm_attention_drop_key "$waits" "$key")
+          [ -n "$waits" ] && waits="${waits}"$'\n'
+          ;;
+        "$resolve"|"$held")
+          decisions=$(_fm_attention_drop_key "$decisions" "$key")
+          [ -n "$decisions" ] && decisions="${decisions}"$'\n'
+          waits=$(_fm_attention_drop_key "$waits" "$key")
+          [ -n "$waits" ] && waits="${waits}"$'\n'
+          ;;
+        done|failed|working)
+          waits=$(_fm_attention_drop_key "$waits" "$key")
+          [ -n "$waits" ] && waits="${waits}"$'\n'
+          ;;
+        "$pause")
+          existing=$(_fm_attention_row_for_key "$waits" "$key" || true)
+          if [ -n "$existing" ]; then
+            IFS=$'\t' read -r old_key old_verb gen n old_note <<EOF
+$existing
+EOF
+            n=$((n + 1))
+          else
+            gen=$(_fm_attention_generation_get "$wait_gens" "$key")
+            gen=$((gen + 1))
+            wait_gens=$(_fm_attention_generation_set "$wait_gens" "$key" "$gen")
+            n=1
+          fi
+          waits=$(_fm_attention_drop_key "$waits" "$key")
+          [ -n "$waits" ] && waits="${waits}"$'\n'
+          waits="${waits}${key}"$'\t'"${verb}"$'\t'"${gen}"$'\t'"${n}"$'\t'"${note}"$'\n'
+          ;;
+      esac
+    done < "$status"
+    while IFS=$'\t' read -r key verb gen note; do
       [ -n "$key" ] || continue
-      printf 'decision\t%s\t%s\t%s\t0\t-1\t%s\n' "$id" "$key" "$verb" "$note"
+      printf 'decision\t%s\t%s\t%s\t%s\t0\t-1\t%s\n' "$id" "$key" "$gen" "$verb" "$note"
     done <<EOF
-$(status_open_decisions "$status")
+$decisions
 EOF
     next=$(fm_attention_wait_next_check "$status" "$state")
-    while IFS=$'\t' read -r key verb note; do
+    while IFS=$'\t' read -r key verb gen n note; do
       [ -n "$key" ] || continue
-      [ "$verb" = "${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}" ] || continue
-      n=$(fm_attention_wait_redeclares "$status" "$key")
-      printf 'wait\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$key" "$verb" "$n" "$next" "$note"
+      printf 'wait\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$key" "$gen" "$verb" "$n" "$next" "$note"
     done <<EOF
-$(status_open_activities "$status")
+$waits
 EOF
   done
   return 0
@@ -255,17 +340,35 @@ fm_attention_json() {  # <fm-home>
       ([ $lines[] | select(startswith($label)) | ltrimstr($label) | sub("^[[:space:]]+"; "") ] | .[0]) // null;
     def fields($lines; $label):
       [ $lines[] | select(startswith($label)) | ltrimstr($label) | sub("^[[:space:]]+"; "") ];
+    def empty_briefing:
+      {briefed:false,choice:null,why_now:null,cost_of_waiting:null,options:[],recommendation:null,briefing_missing:[]};
     def briefing($record):
       ($record.body_lines // []) as $lines
       | if ($lines | index($brief_header)) == null then
-          {briefed:false,choice:null,why_now:null,cost_of_waiting:null,options:[],recommendation:null}
+          empty_briefing
         else
-          {briefed:true,
-           choice:field($lines; $f_choice),
-           why_now:field($lines; $f_why),
-           cost_of_waiting:field($lines; $f_cost),
-           options:fields($lines; $f_option),
-           recommendation:field($lines; $f_recommend)}
+          (field($lines; $f_choice)) as $choice
+          | (field($lines; $f_why)) as $why
+          | (field($lines; $f_cost)) as $cost
+          | (fields($lines; $f_option)) as $options
+          | (field($lines; $f_recommend)) as $recommend
+          | if ($choice == null and $why == null and $cost == null and ($options | length) == 0 and $recommend == null) then
+              empty_briefing
+            else
+              {briefed:true,
+               choice:$choice,
+               why_now:$why,
+               cost_of_waiting:$cost,
+               options:$options,
+               recommendation:$recommend,
+               briefing_missing:([
+                 if $choice == null then "The choice" else empty end,
+                 if $why == null then "Why it matters now" else empty end,
+                 if $cost == null then "If this waits" else empty end,
+                 if ($options | length) == 0 then "Options" else empty end,
+                 if $recommend == null then "Recommended" else empty end
+               ])}
+            end
         end;
     # Selected on the captain hold itself, not on the snapshot captain_actionable
     # flag, which also requires the item own kind to be "captain". The documented
@@ -316,16 +419,16 @@ fm_attention_json() {  # <fm-home>
            escalated:false,
            next_check_seconds:null,
            briefed:false,choice:null,why_now:null,cost_of_waiting:null,
-           options:[],recommendation:null} ];
+           options:[],recommendation:null,briefing_missing:[]} ];
     def status_rows:
       [ inputs
         | select(length > 0)
         | split("\t")
-        | select(length >= 7)
-        | {class:.[0],id:.[1],key:.[2],verb:.[3],
-           redeclares:(.[4] | tonumber? // 0),
-           next_check_seconds:(.[5] | tonumber? // -1),
-           note:(.[6:] | join("\t"))} ];
+        | select(length >= 8)
+        | {class:.[0],id:.[1],key:.[2],generation:.[3],verb:.[4],
+           redeclares:(.[5] | tonumber? // 0),
+           next_check_seconds:(.[6] | tonumber? // -1),
+           note:(.[7:] | join("\t"))} ];
     # The title of the work item itself, so a captain-facing line names the piece
     # of work rather than repeating the event note as its own heading. Falls back
     # to the note when the backlog has no matching row, and never to the raw id,
@@ -336,7 +439,7 @@ fm_attention_json() {  # <fm-home>
       [ status_rows[]
         | (.redeclares >= $escalate) as $esc
         | {class:(if .class == "wait" and $esc then "decision" else .class end),
-           identity:(.class + ":" + .id + ":" + .key),
+           identity:(.class + ":" + .id + ":" + .key + ":" + .generation),
            source:(if .class == "wait" then "declared-wait" else "status-decision" end),
            id:.id,
            key:.key,
@@ -348,7 +451,7 @@ fm_attention_json() {  # <fm-home>
            escalated:(.class == "wait" and $esc),
            next_check_seconds:(if .class == "wait" then .next_check_seconds else null end),
            briefed:false,choice:null,why_now:null,cost_of_waiting:null,
-           options:[],recommendation:null} ];
+           options:[],recommendation:null,briefing_missing:[]} ];
     (backlog_decisions + status_records) as $primary
     # A live declared wait supersedes the backlog-level wait row for the same
     # work item: both describe one thing waiting, and the live one carries the
