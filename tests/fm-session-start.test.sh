@@ -405,15 +405,108 @@ SH
 # run_session_start <home> <root> <path>
 # Drop every harness env marker from bin/fm-harness.sh detect_own so the
 # surrounding interactive shell cannot leak past the suite's fake ps harness.
-# Markers today: CLAUDECODE (claude), PI_CODING_AGENT (pi), GROK_AGENT (grok).
+# Markers today: CLAUDECODE (claude), PI_CODING_AGENT plus FM_PI_HARNESS
+# (Pi family), GROK_AGENT (grok).
 # codex and opencode have no env markers (ancestry only). Without this, a local
 # claude/pi/grok session fails cases that pin a different fake harness while CI
 # (no ambient markers) still passes.
 run_session_start() {
-  local home=$1 root=$2 path=$3
-  env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
-    FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$path" \
-    "$SESSION_START"
+  local home=$1 root=$2 path=$3 pi_harness=${4:-}
+  if [ -n "$pi_harness" ]; then
+    env -u CLAUDECODE -u GROK_AGENT PI_CODING_AGENT=true FM_PI_HARNESS="$pi_harness" \
+      FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$path" \
+      "$SESSION_START"
+  else
+    env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+      FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$path" \
+      "$SESSION_START"
+  fi
+}
+
+# prepare_session_start_secondmate <name>: a throwaway main home and Pi
+# secondmate home wired to the real spawn implementation through the fixture
+# root. Echoes root|home|fakebin|mate|log|spawned.
+prepare_session_start_secondmate() {
+  local name=$1 rec root home fakebin w mate log spawned id=$SESSION_START_SECOND_MATE_ID
+  rec=$(new_world "$name")
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  w=${root%/root}
+  mate="$w/secondmate-$id"
+  log="$w/tmux.log"
+  spawned="$w/tmux.spawned"
+  mkdir -p "$mate/bin" "$mate/data" "$mate/state" "$mate/config" "$mate/projects"
+  printf '%s\n' "$id" > "$mate/.fm-secondmate-home"
+  printf '# Firstmate\n' > "$mate/AGENTS.md"
+  printf 'Second mate charter.\n' > "$mate/data/charter.md"
+  printf '%s\n' pi > "$home/config/secondmate-harness"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  touch "$home/state/.last-watcher-beat"
+  {
+    printf 'window=firstmate:fm-%s\n' "$id"
+    printf 'kind=secondmate\n'
+    printf 'harness=pi\n'
+    printf 'home=%s\n' "$mate"
+  } > "$home/state/$id.meta"
+  ln -s "$ROOT/bin" "$root/bin"
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_tmux_secondmate_recovery "$fakebin"
+  : > "$log"
+  printf '%s|%s|%s|%s|%s|%s\n' "$root" "$home" "$fakebin" "$mate" "$log" "$spawned"
+}
+
+run_session_start_secondmate() {
+  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 spawned=$6 mode=$7
+  TMUX='' FM_BACKEND=tmux FM_FAKE_TMUX_MODE="$mode" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_SPAWNED="$spawned" FM_FAKE_SECOND_MATE_HOME="$mate" \
+    FM_FAKE_SECOND_MATE_ID="$SESSION_START_SECOND_MATE_ID" \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH"
+}
+
+prepare_session_start_herdr_secondmate() {
+  local name=$1 rec root home fakebin w mate log state id=$SESSION_START_HERDR_SECOND_MATE_ID
+  rec=$(new_world "$name")
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  w=${root%/root}
+  mate="$w/secondmate-$id"
+  log="$w/herdr.log"
+  state="$w/herdr.state"
+  mkdir -p "$mate/bin" "$mate/data" "$mate/state" "$mate/config" "$mate/projects"
+  printf '%s\n' "$id" > "$mate/.fm-secondmate-home"
+  printf '# Firstmate\n' > "$mate/AGENTS.md"
+  printf 'Second mate charter.\n' > "$mate/data/charter.md"
+  printf '%s\n' herdr > "$home/config/backend"
+  printf '%s\n' pi > "$home/config/secondmate-harness"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  touch "$home/state/.last-watcher-beat"
+  {
+    printf 'window=default:p-old\n'
+    printf 'kind=secondmate\n'
+    printf 'harness=pi\n'
+    printf 'home=%s\n' "$mate"
+    printf 'backend=herdr\n'
+    printf 'herdr_session=default\n'
+    printf 'herdr_workspace_id=ws1\n'
+    printf 'herdr_tab_id=t-old\n'
+    printf 'herdr_pane_id=p-old\n'
+  } > "$home/state/$id.meta"
+  ln -s "$ROOT/bin" "$root/bin"
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  make_fake_herdr_secondmate_recovery "$fakebin"
+  : > "$log"
+  printf '%s|%s|%s|%s|%s|%s\n' "$root" "$home" "$fakebin" "$mate" "$log" "$state"
+}
+
+run_session_start_herdr_secondmate() {
+  local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6
+  FM_BACKEND=herdr FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" \
+    FM_FAKE_SECOND_MATE_ID="$SESSION_START_HERDR_SECOND_MATE_ID" \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH"
 }
 
 # prepare_session_start_secondmate <name>: a throwaway main home and Pi
@@ -1251,6 +1344,29 @@ EOF
   pass "session start emits exactly one detected harness block and reports Pi extension load state"
 }
 
+test_pi_signed_primary_uses_pi_extensions_without_identity_normalization() {
+  local rec root home fakebin out
+  rec=$(new_world pi-signed-supervision-block)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_harness "$fakebin" pi-signed
+
+  out=$(FM_FAKE_HARNESS=pi-signed run_session_start "$home" "$root" "$fakebin:$BASE_PATH" pi-signed)
+
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: pi-signed" \
+    "session start normalized a pi-signed primary to pi"
+  assert_contains "$out" "Mode: Pi extension background wake." \
+    "pi-signed primary did not reuse Pi's supervision protocol"
+  assert_contains "$out" "PI_WATCH_EXTENSION: not loaded" \
+    "pi-signed primary skipped Pi extension validation"
+  assert_contains "$out" "restart pi-signed so $root/.pi/extensions/fm-primary-turnend-guard.ts and $root/.pi/extensions/fm-primary-pi-watch.ts auto-load" \
+    "pi-signed extension diagnostic did not preserve the executable identity"
+
+  pass "session start preserves pi-signed primary identity while applying Pi extension guarantees"
+}
+
 test_pi_diagnostic_rejects_stale_loaded_marker() {
   local rec root home fakebin out marker holder_pid
   rec=$(new_world pi-stale-loaded-marker)
@@ -1378,6 +1494,7 @@ test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
 test_supervision_block_exactly_one_and_pi_diagnostic
+test_pi_signed_primary_uses_pi_extensions_without_identity_normalization
 test_pi_diagnostic_rejects_stale_loaded_marker
 test_pi_diagnostic_accepts_prelock_loaded_marker
 test_pi_diagnostic_rejects_missing_turnend_guard_marker
