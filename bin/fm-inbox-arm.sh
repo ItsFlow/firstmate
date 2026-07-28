@@ -88,6 +88,7 @@ fm_pr_regular_destination_on_device_or_absent "$CHECK" "$STATE_DEVICE" \
 printf -v BOARD_Q '%q' "$BOARD"
 printf -v ANSWERS_Q '%q' "$ANSWERS"
 printf -v PORT_Q '%q' "$PORT"
+printf -v SCRIPT_DIR_Q '%q' "$SCRIPT_DIR"
 
 umask 077
 TMP_CHECK=$(mktemp "$STATE/.inbox.check.XXXXXX") || die "cannot stage the answer relay"
@@ -101,6 +102,7 @@ cat > "$TMP_CHECK" <<SHIM || die "cannot write the answer relay"
 set -u
 BOARD=$BOARD_Q
 ANSWERS=$ANSWERS_Q
+SCRIPT_DIR=$SCRIPT_DIR_Q
 export LAVISH_AXI_PORT=$PORT_Q
 command -v lavish-axi >/dev/null 2>&1 || exit 0
 command -v curl >/dev/null 2>&1 || exit 0
@@ -108,9 +110,14 @@ curl -s -o /dev/null --max-time 2 "http://127.0.0.1:\$LAVISH_AXI_PORT/" \
   >/dev/null 2>&1 || exit 0
 res=\$(lavish-axi poll "\$BOARD" --timeout-ms 5000 2>/dev/null) || exit 0
 case "\$res" in *"status: feedback"*) ;; *) exit 0 ;; esac
-mkdir -p "\$ANSWERS" || exit 0
+FM_X_LIB=\$SCRIPT_DIR/fm-x-lib.sh
+[ -r "\$FM_X_LIB" ] || { printf 'inbox board error: could not record captain answer in state/inbox-answers\n'; exit 0; }
+. "\$FM_X_LIB" || { printf 'inbox board error: could not record captain answer in state/inbox-answers\n'; exit 0; }
 stamp=\$(date -u +%Y%m%dT%H%M%SZ)
-printf '%s\n' "\$res" > "\$ANSWERS/\$stamp.txt" 2>/dev/null || exit 0
+if ! (set -o pipefail; printf '%s\n' "\$res" | fmx_private_artifact_publish_stdin "\$ANSWERS" "\$stamp.txt" 600); then
+  printf 'inbox board error: could not record captain answer in state/inbox-answers\n'
+  exit 0
+fi
 printf 'inbox board: a captain answer is waiting in state/inbox-answers\n'
 SHIM
 chmod 0700 "$TMP_CHECK" || die "cannot set relay permissions"

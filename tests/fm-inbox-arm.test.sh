@@ -169,7 +169,7 @@ SH
 }
 
 test_relay_wakes_once_for_feedback() {
-  local home fakebin out answers count
+  local home fakebin out answers count answer_file
   home=$(make_home feedback)
   fakebin=$(fm_fakebin "$home")
   cat > "$fakebin/curl" <<'SH'
@@ -191,7 +191,40 @@ SH
   assert_present "$answers" "feedback must create the answer drop"
   count=$(find "$answers" -type f | wc -l | tr -d ' ')
   [ "$count" = 1 ] || fail "feedback must write exactly one answer file, got $count"
+  [ "$(file_mode "$answers")" = 700 ] || fail "the answer drop must be mode 0700"
+  answer_file=$(find "$answers" -type f -name '*.txt' -print | head -n1)
+  [ -n "$answer_file" ] || fail "feedback must write a named answer file"
+  [ "$(file_mode "$answer_file")" = 600 ] || fail "the answer file must be mode 0600"
+  assert_grep "DECISION task: ship it" "$answer_file" \
+    "the answer file must preserve the captain feedback"
   pass "the relay emits one fixed wake line for feedback"
+}
+
+test_relay_rejects_linked_answer_drop_with_diagnostic() {
+  local home fakebin out peer_count
+  home=$(make_home linked-answers)
+  fakebin=$(fm_fakebin "$home")
+  mkdir -p "$home/external-answers"
+  ln -s "$home/external-answers" "$home/state/inbox-answers"
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/lavish-axi" <<'SH'
+#!/usr/bin/env bash
+printf 'status: feedback\n'
+printf ' decision,"DECISION task: keep private"\n'
+exit 0
+SH
+  chmod +x "$fakebin/curl" "$fakebin/lavish-axi"
+  FM_HOME="$home" "$ARM" "$home/board.html" >/dev/null || fail "arming must succeed"
+  out=$(PATH="$fakebin:$PATH" bash "$home/state/inbox.check.sh")
+  [ "$out" = "inbox board error: could not record captain answer in state/inbox-answers" ] \
+    || fail "unsafe answer drop must emit one diagnostic wake, got: $out"
+  [ -L "$home/state/inbox-answers" ] || fail "the unsafe answer drop symlink must remain untouched"
+  peer_count=$(find "$home/external-answers" -type f | wc -l | tr -d ' ')
+  [ "$peer_count" = 0 ] || fail "the relay must not write through a linked answer drop"
+  pass "the relay refuses linked answer drops with a diagnostic wake"
 }
 
 test_serve_passes_resolved_port_to_relay() {
@@ -226,4 +259,5 @@ test_relay_targets_the_board_path
 test_relay_rejects_linked_check_path_without_writing_through
 test_relay_escapes_paths_and_exports_port
 test_relay_wakes_once_for_feedback
+test_relay_rejects_linked_answer_drop_with_diagnostic
 test_serve_passes_resolved_port_to_relay
