@@ -41,6 +41,7 @@ If `jq` is missing or hook stdin is empty, the guard exits 0 because it cannot s
 The predicate above counts `state/*.meta`, so a primary whose only live work is an unanswered captain decision reaches every allow path with zero in flight and ends silently.
 The guard therefore carries a second, independent stop, checked only on the paths where the supervision predicate already allows, so the two never stack and the watcher alarm keeps priority.
 It fires when a captain decision is open that has never reached a captain-facing surface, and it is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
+If the captain-attention set cannot be derived, the allow path stops once with an explicit unknown-state banner and does not record the surfaced digest.
 Declared external delays never fire it.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables it without touching the supervision backstop.
 [`captain-attention.md`](captain-attention.md) owns the contract, the set, and the surfacing rules.
@@ -64,6 +65,7 @@ Claude runs the guard with `--claude`, which ignores `stop_hook_active` and coop
 Claude Code sets `stop_hook_active=true` on every stop after any stop-hook continuation, including `asyncRewake` rewakes, which re-opened the 2026-07-21 blind window under the default one-shot behavior.
 The Claude mode waits up to `FM_CLAUDE_AUTOARM_SYNC_WAIT_MS` (default 800 milliseconds) and allows the stop when the watcher is healthy, `state/.claude-autoarm.lock` has a live owner, or `state/.claude-autoarm-epoch` contains a fresh rewake outcome.
 When none of those proofs appears, it re-blocks up to `FM_CLAUDE_TURNEND_BLOCK_BUDGET` times (default 3, below Claude's 8-block override), then allows degraded with a visible `systemMessage`.
+Every Claude allow path still passes through the captain-attention stop before it exits.
 Any allow resets the budget.
 
 OpenCode, Pi, and pi-signed expose passive callbacks for this purpose.

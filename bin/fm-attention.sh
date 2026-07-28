@@ -3,8 +3,7 @@
 #
 # Renders the captain-attention contract owned by bin/fm-attention-lib.sh, which
 # derives the open set from data/backlog.md and state/*.status. This command
-# parses no fleet state of its own and writes nothing except the surfaced-digest
-# marker described below.
+# parses no fleet state of its own.
 #
 # Every open item is exactly one of two things:
 #   a decision - your answer is needed before the work can move;
@@ -36,7 +35,7 @@
 #   fm-attention.sh -h | --help
 #
 # Exit status is 0 whenever the set could be read; this is a reporting command,
-# never a gate. Exit 3 means jq is unavailable, so the set could not be derived.
+# never a gate. Exit 3 means the complete set could not be derived.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,8 +70,38 @@ while [ "$#" -gt 0 ]; do
 done
 
 fm_attention_status "$FM_HOME"
+
+mark_surfaced() {
+  [ -d "$STATE" ] || return 0
+  printf 'attention=%s\ndecisions=%s\n' "$FM_ATT_DIGEST" "$FM_ATT_DECISION_DIGEST" > "$STATE/.captain-attention" 2>/dev/null || true
+  return 0
+}
+
+render_unknown() {
+  printf "CAPTAIN'S CALL\n"
+  printf 'I could not determine whether anything needs your decision or is waiting.\n'
+  printf 'Treat this as unresolved until Firstmate can read the open decision and wait list.\n'
+}
+
+render_brief_unknown() {
+  printf "CAPTAIN'S CALL: unknown - the open decision and wait list could not be determined.\n"
+}
+
 if [ "$FM_ATT_AVAILABLE" != true ]; then
-  echo "fm-attention: jq is required to read the open decision and wait set" >&2
+  case "$MODE" in
+    json)
+      printf '%s\n' "$FM_ATT_JSON"
+      ;;
+    status)
+      printf 'attention=unknown decisions=unknown waits=unknown new=true decisions_new=true unknown=true\n'
+      ;;
+    brief)
+      render_brief_unknown
+      ;;
+    *)
+      render_unknown
+      ;;
+  esac
   exit 3
 fi
 
@@ -144,6 +173,7 @@ render_view() {
   printf "CAPTAIN'S CALL\n"
   if [ "$total" -eq 0 ]; then
     printf 'Nothing needs your decision, and nothing is waiting.\n'
+    [ "$MARK" -eq 1 ] && mark_surfaced
     return 0
   fi
   printf '%s you. %s waiting.\n' \
@@ -225,6 +255,7 @@ EOF
     done
   fi
   printf '\nEverything above stays listed here until it is answered or clears.\n'
+  [ "$MARK" -eq 1 ] && mark_surfaced
 }
 
 render_brief() {
@@ -272,7 +303,6 @@ case "$MODE" in
     ;;
   *)
     render_view
-    [ "$MARK" -eq 1 ] && fm_attention_mark_surfaced "$STATE" "$FM_ATT_DIGEST" "$FM_ATT_DECISION_DIGEST"
     ;;
 esac
 exit 0

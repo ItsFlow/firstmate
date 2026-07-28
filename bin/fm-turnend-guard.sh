@@ -121,10 +121,6 @@ STOP_HOOK_ACTIVE=$(printf '%s' "$PAYLOAD" | jq -r '
   else false
   end
 ' 2>/dev/null) || exit 0
-if [ "$CLAUDE_MODE" -eq 0 ] && [ "$STOP_HOOK_ACTIVE" = "true" ]; then
-  exit 0
-fi
-
 # --- scope precisely to a PRIMARY checkout ----------------------------------
 # A genuinely-marked secondmate home runs its OWN primary firstmate session, so
 # force-INCLUDE it as a guarded primary whether treehouse leased it as a linked
@@ -155,14 +151,15 @@ budget_reset() {
 # live work is an unanswered decision reaches every exit path with zero in
 # flight and ends silently.
 #
-# Strictly one block per DISTINCT decision set, and never a loop: the surfaced
-# digest is recorded BEFORE exiting, so the very next turn end sees the same set
-# as already surfaced and allows. Identities carry no prose, so re-declaring the
-# same wait cannot manufacture a new set. Declared waits deliberately do NOT
-# block - they need no captain action, and blocking on them would turn every
-# routine delay into an interruption; they surface through bin/fm-guard.sh and
-# the session-start digest instead. Any harness whose adapter honors this
-# script's exit status gets the behavior; nothing here is harness-specific.
+# Strictly one block per DISTINCT decision set, and never a loop: the
+# captain-facing render records the surfaced digest before exiting, so the very
+# next turn end sees the same set as already surfaced and allows. Identities carry
+# no prose, so re-declaring the same wait cannot manufacture a new set. Declared
+# waits deliberately do NOT block - they need no captain action, and blocking on
+# them would turn every routine delay into an interruption; they surface through
+# bin/fm-guard.sh and the session-start digest instead. Any harness whose adapter
+# honors this script's exit status gets the behavior; nothing here is
+# harness-specific.
 block_attention() {
   local rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   {
@@ -178,32 +175,55 @@ block_attention() {
   exit 2
 }
 
-attention_would_block() {
+block_attention_unknown() {
+  local rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  {
+    printf '●%s\n' "$rule"
+    printf '●  TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS\n'
+    "$SCRIPT_DIR/fm-attention.sh" --no-mark 2>/dev/null | sed 's/^/●  /'
+    printf '●  Do not report an all-clear until the open decision and wait list can be read.\n'
+    printf '●%s\n' "$rule"
+  } >&2
+  [ -d "$STATE" ] && printf 'unknown=%s\n' "$FM_ATT_UNKNOWN_DIGEST" > "$STATE/.captain-attention-unknown" 2>/dev/null || true
+  exit 2
+}
+
+attention_gate() {
   [ "$FM_ATTENTION_TURNEND_BLOCK" -eq 1 ] || return 1
   fm_attention_status "$FM_HOME"
-  [ "$FM_ATT_AVAILABLE" = true ] || return 1
-  [ "$FM_ATT_DECISIONS" -gt 0 ] || return 1
-  [ "$FM_ATT_DECISIONS_NEW" = true ]
+  if [ "$FM_ATT_AVAILABLE" = true ]; then
+    [ "$FM_ATT_DECISIONS" -gt 0 ] && [ "$FM_ATT_DECISIONS_NEW" = true ] && block_attention
+    return 0
+  fi
+  [ "${FM_ATT_UNKNOWN:-false}" = true ] || return 0
+  [ "${FM_ATT_UNKNOWN_NEW:-true}" = true ] && block_attention_unknown
+  return 0
 }
+
+allow_stop() {
+  attention_gate
+  exit 0
+}
+
+if [ "$CLAUDE_MODE" -eq 0 ] && [ "$STOP_HOOK_ACTIVE" = "true" ]; then
+  allow_stop
+fi
 
 fm_supervision_status "$STATE" "$GRACE"
 if [ "$CLAUDE_MODE" -eq 1 ]; then
   if [ "$FM_SUP_NEEDED" = false ]; then
     budget_reset
-    attention_would_block && block_attention
-    exit 0
+    allow_stop
   fi
 else
   if [ "$FM_SUP_IN_FLIGHT" -eq 0 ]; then
     budget_reset
-    attention_would_block && block_attention
-    exit 0
+    allow_stop
   fi
 fi
 if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
   budget_reset
-  attention_would_block && block_attention
-  exit 0
+  allow_stop
 fi
 
 block_stop() {
@@ -257,14 +277,14 @@ i=0
 while [ "$i" -lt $((SYNC_WAIT_MS / 100)) ]; do
   if autoarm_owns_recovery; then
     budget_reset
-    exit 0
+    allow_stop
   fi
   sleep 0.1
   i=$((i + 1))
 done
 if autoarm_owns_recovery; then
   budget_reset
-  exit 0
+  allow_stop
 fi
 
 # The auto-arm genuinely failed to establish: re-block, but never past the
@@ -283,6 +303,7 @@ fi
 COUNT=$((COUNT + 1))
 if [ "$COUNT" -gt "$BLOCK_BUDGET" ]; then
   budget_reset
+  attention_gate
   if [ "$FM_SUP_IN_FLIGHT" -gt 0 ]; then
     NEED_DESC="$FM_SUP_IN_FLIGHT task(s) in flight"
   else

@@ -40,7 +40,8 @@
 #                       block and the context because it is this turn's second
 #                       work queue and must be seen before the first
 #                       captain-facing reply. A locked session records the
-#                       surfaced digest; a read-only session does not.
+#                       surfaced digest when the full set can be read; a
+#                       read-only session does not.
 #   5. supervision    - the emitted operating block for this primary harness.
 #   6. context digest - data/projects.md, data/secondmates.md, data/captain.md,
 #                       data/captain-shared.md, data/learnings.md: read-only,
@@ -319,9 +320,9 @@ fi
 # Printed straight after the wake queue and before anything else, because it is
 # this turn's second work queue and must be seen before the first captain-facing
 # reply is composed. bin/fm-attention-lib.sh owns the set; this only renders it.
-# A locked session records the surfaced digest so the guards stop interrupting
-# for a set the session has now seen; a read-only session leaves that record to
-# the session that owns the home.
+# A locked session records the surfaced digest only when the full set can be
+# read, so the guards stop interrupting for a set the session has now seen; a
+# read-only session leaves that record to the session that owns the home.
 subsection "CAPTAIN'S CALL"
 if [ "$READ_ONLY" -eq 1 ]; then
   ATTENTION_OUT=$("$SCRIPT_DIR/fm-attention.sh" --no-mark 2>&1)

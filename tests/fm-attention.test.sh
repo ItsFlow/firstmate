@@ -70,6 +70,13 @@ run_turnend() {  # <home>
       FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" "$TURNEND" 2>&1
 }
 
+run_turnend_claude() {  # <home> [<stop-hook-active>]
+  local home=$1 active=${2:-false}
+  printf '{"stop_hook_active":%s,"session_id":"attention-test"}' "$active" \
+    | CLAUDECODE=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_STATE_OVERRIDE="$home/state" \
+      FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" "$TURNEND" --claude 2>&1
+}
+
 add_row() {  # <home> <section> <line>
   local home=$1 section=$2 line=$3
   awk -v section="## $section" -v row="$line" '
@@ -77,6 +84,25 @@ add_row() {  # <home> <section> <line>
     $0 == section { print row }
   ' "$home/data/backlog.md" > "$home/data/backlog.md.tmp"
   mv "$home/data/backlog.md.tmp" "$home/data/backlog.md"
+}
+
+failing_snapshot() {  # <home>
+  local home=$1 bin="$home/bin/failing-snapshot"
+  printf '#!/usr/bin/env bash\nexit 42\n' > "$bin"
+  chmod +x "$bin"
+  printf '%s\n' "$bin"
+}
+
+add_unsurfaced_decision() {  # <home>
+  local home=$1
+  add_row "$home" Queued \
+    '- [ ] sample-decision-x - Approve the worker installs (repo: sample) (kind: captain) (since 2026-07-28) (hold: the machine needs approval before workers run there) (hold-kind: captain)'
+}
+
+add_unsupervised_work() {  # <home>
+  local home=$1
+  fm_write_meta "$home/state/task1.meta" \
+    "window=fixture:fm-task1" "project=$home/projects/sample" "kind=ship"
 }
 
 # --- the recorded explanation must survive intact ---------------------------
@@ -226,6 +252,39 @@ EOF
     "a briefing header with no recognized fields must still use the no-briefing branch"
   assert_not_contains "$out" 'Still needs:' "the no-briefing branch must not claim a partial briefing exists"
   pass "a partial captain briefing renders written fields and names missing ones"
+}
+
+test_failed_backlog_projection_is_unknown_not_empty() {
+  local home snapshot out status
+  home=$(make_primary_home snapshot-unknown)
+  snapshot=$(failing_snapshot "$home")
+
+  out=$(FM_ATTENTION_SNAPSHOT_BIN="$snapshot" attention "$home" 2>&1); status=$?
+  expect_code 3 "$status" "a failed backlog projection must make attention unavailable"
+  assert_contains "$out" 'could not determine whether anything needs your decision or is waiting' \
+    "unknown attention must say the open set could not be determined"
+  assert_not_contains "$out" 'Nothing needs your decision, and nothing is waiting.' \
+    "unknown attention must not render as an all-clear"
+  assert_absent "$home/state/.captain-attention" \
+    "unknown attention must not record the surfaced marker"
+
+  out=$(FM_ATTENTION_SNAPSHOT_BIN="$snapshot" attention "$home" --status 2>&1); status=$?
+  expect_code 3 "$status" "unknown status must keep attention unavailable"
+  assert_contains "$out" 'attention=unknown' "unknown status must be explicit"
+  assert_absent "$home/state/.captain-attention" \
+    "unknown status must not record the surfaced marker"
+
+  out=$(FM_ATTENTION_SNAPSHOT_BIN="$snapshot" run_turnend "$home"); status=$?
+  expect_code 2 "$status" "a turn end must stop once when the attention set is unknown"
+  assert_contains "$out" 'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS' \
+    "unknown turn-end stop must be explicit"
+  assert_absent "$home/state/.captain-attention" \
+    "unknown turn-end stop must not record the surfaced marker"
+
+  out=$(FM_ATTENTION_SNAPSHOT_BIN="$snapshot" run_turnend "$home"); status=$?
+  expect_code 0 "$status" "a persistent unknown must be bounded to one forced continuation"
+  [ -z "$out" ] || fail "the bounded unknown turn end produced output: $out"
+  pass "a failed backlog projection is unknown, not an empty captain call"
 }
 
 # --- waits: what is awaited, and when it is next checked ---------------------
@@ -386,6 +445,26 @@ test_guard_banner_uses_captain_safe_rendering_to_mark() {
   pass "the guard banner renders the captain-safe view and records that surface"
 }
 
+test_only_the_captain_renderer_writes_the_surface_marker() {
+  local writers
+  writers=$(
+    while IFS= read -r file; do
+      grep -n -- '\.captain-attention' "$file" \
+        | grep -v -- '\.captain-attention-unknown' \
+        | grep -E -- '(^|[[:space:]])>[[:space:]]*"?[^"]*\.captain-attention("|$)|(^|[[:space:]])(tee|mv|cp|touch|rm)[[:space:]].*\.captain-attention' >/dev/null \
+        && printf '%s\n' "$file"
+    done <<EOF
+$(grep -RIl -- '\.captain-attention' "$ROOT/bin")
+EOF
+  )
+  writers=$(printf '%s\n' "$writers" | sort -u | sed '/^$/d')
+  [ "$writers" = "$ROOT/bin/fm-attention.sh" ] || fail "surface marker writers escaped the captain renderer: $writers"
+  if grep -R -- 'fm_attention_mark_surfaced' "$ROOT/bin" >/dev/null 2>&1; then
+    fail "general-purpose surface marker writer was reintroduced"
+  fi
+  pass "only the captain-safe renderer writes the surfaced marker"
+}
+
 test_ordinary_reads_do_not_become_false_alarms() {
   local home out
   home=$(make_home quiet-reads)
@@ -511,8 +590,7 @@ test_unaccounted_primary_work_is_not_idle() {
 test_turn_end_stops_once_on_an_unsurfaced_decision() {
   local home out status
   home=$(make_primary_home turnend)
-  add_row "$home" Queued \
-    '- [ ] sample-decision-x - Approve the worker installs (repo: sample) (kind: captain) (since 2026-07-28) (hold: the machine needs approval) (hold-kind: captain)'
+  add_unsurfaced_decision "$home"
 
   out=$(run_turnend "$home"); status=$?
   expect_code 2 "$status" "a turn must not end with a captain decision the captain has never seen"
@@ -532,6 +610,40 @@ test_turn_end_stops_once_on_an_unsurfaced_decision() {
   run_turnend "$home" >/dev/null; status=$?
   expect_code 0 "$status" "the new set must also cost only one continuation"
   pass "a turn cannot end on an unsurfaced captain decision, and each set costs one stop"
+}
+
+test_claude_autoarm_allow_paths_still_stop_for_unsurfaced_decisions() {
+  local home out status
+
+  home=$(make_primary_home claude-autoarm-loop)
+  add_unsurfaced_decision "$home"
+  add_unsupervised_work "$home"
+  printf 'epoch=1 owner_pid=999 outcome=rewake updated_at=%s\n' "$(date +%s)" > "$home/state/.claude-autoarm-epoch"
+  out=$(run_turnend_claude "$home" false); status=$?
+  expect_code 2 "$status" "Claude auto-arm sync-loop allow must pass the captain-call gate"
+  assert_contains "$out" 'TURN WOULD END WITHOUT TELLING THE CAPTAIN' \
+    "Claude auto-arm sync-loop allow must not hide an unsurfaced decision"
+
+  home=$(make_primary_home claude-autoarm-post-loop)
+  add_unsurfaced_decision "$home"
+  add_unsupervised_work "$home"
+  printf 'epoch=1 owner_pid=999 outcome=rewake updated_at=%s\n' "$(date +%s)" > "$home/state/.claude-autoarm-epoch"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=0 run_turnend_claude "$home" false); status=$?
+  expect_code 2 "$status" "Claude auto-arm post-loop allow must pass the captain-call gate"
+  assert_contains "$out" 'TURN WOULD END WITHOUT TELLING THE CAPTAIN' \
+    "Claude auto-arm post-loop allow must not hide an unsurfaced decision"
+
+  home=$(make_primary_home claude-budget-attention)
+  add_unsurfaced_decision "$home"
+  add_unsupervised_work "$home"
+  printf 'session=attention-test\ncount=3\n' > "$home/state/.turnend-claude-blocks"
+  out=$(FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=0 run_turnend_claude "$home" true); status=$?
+  expect_code 2 "$status" "Claude budget-exhausted allow must pass the captain-call gate"
+  assert_contains "$out" 'TURN WOULD END WITHOUT TELLING THE CAPTAIN' \
+    "Claude budget-exhausted allow must not hide an unsurfaced decision"
+  assert_not_contains "$out" '"systemMessage"' \
+    "Claude budget-exhausted allow must not run once an unsurfaced decision blocks"
+  pass "Claude auto-arm allow paths stop on unsurfaced decisions"
 }
 
 test_declared_waits_never_stop_a_turn() {
@@ -603,18 +715,21 @@ test_briefed_decision_renders_concretely
 test_a_captain_gated_work_item_is_a_decision_not_a_delay
 test_unbriefed_decision_is_honest_about_missing_language
 test_partial_briefing_renders_recorded_fields_and_names_missing_ones
+test_failed_backlog_projection_is_unknown_not_empty
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_repeated_wait_escalates_to_a_decision
 test_identities_ignore_wording_so_repeats_do_not_re_alarm
 test_reopened_status_items_get_new_generation_identity
 test_brief_form_never_spends_captain_surface_marker
 test_guard_banner_uses_captain_safe_rendering_to_mark
+test_only_the_captain_renderer_writes_the_surface_marker
 test_ordinary_reads_do_not_become_false_alarms
 test_ledger_keeps_showing_an_open_item_after_it_was_surfaced
 test_resolution_clears_the_item
 test_retry_never_erases_a_written_briefing
 test_unaccounted_primary_work_is_not_idle
 test_turn_end_stops_once_on_an_unsurfaced_decision
+test_claude_autoarm_allow_paths_still_stop_for_unsurfaced_decisions
 test_declared_waits_never_stop_a_turn
 test_captain_view_carries_no_internal_vocabulary
 test_empty_home_says_so_plainly

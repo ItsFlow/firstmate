@@ -161,7 +161,16 @@ fi
 # read that changes nothing prints nothing.
 if [ "$FM_GUARD_NO_ATTENTION" != 1 ]; then
   fm_attention_status "$FM_HOME"
-  if [ "$FM_ATT_AVAILABLE" = true ] && [ "$FM_ATT_NEW" = true ] && [ "$FM_ATT_COUNT" -gt 0 ]; then
+  if [ "$FM_ATT_AVAILABLE" != true ] && [ "${FM_ATT_UNKNOWN:-false}" = true ]; then
+    arule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    {
+      printf '●%s\n' "$arule"
+      printf "●  CAPTAIN'S CALL UNKNOWN - open decisions and waits could not be determined\n"
+      "$SCRIPT_DIR/fm-attention.sh" --no-mark 2>/dev/null | sed 's/^/●  /'
+      printf '●  Do not report an all-clear until this can be read.\n'
+      printf '●%s\n' "$arule"
+    } >&2
+  elif [ "$FM_ATT_AVAILABLE" = true ] && [ "$FM_ATT_NEW" = true ] && [ "$FM_ATT_COUNT" -gt 0 ]; then
     arule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     {
       printf '●%s\n' "$arule"

@@ -48,15 +48,16 @@
 #
 # SURFACING
 # state/.captain-attention records the digest of the set most recently rendered
-# to a captain-facing surface:
+# to a captain-facing surface by bin/fm-attention.sh:
 #   attention=<digest over every identity>
 #   decisions=<digest over decision identities only>
 # A digest that differs from the recorded one means the set CHANGED and has not
 # been surfaced since. Rendering is surfacing: bin/fm-attention.sh records the
-# digest as a side effect of printing, so an ordinary read that changes nothing
-# can never become an alarm, and an item that is answered simply drops out of
-# the set. The marker never suppresses the ledger itself - an open item stays
-# rendered until it is resolved; the marker only bounds the INTERRUPT.
+# digest as a side effect of printing its captain-facing view, so an ordinary
+# read that changes nothing can never become an alarm, and an item that is
+# answered simply drops out of the set. The marker never suppresses the ledger
+# itself - an open item stays rendered until it is resolved; the marker only
+# bounds the INTERRUPT.
 #
 # CONSUMERS
 #   bin/fm-attention.sh        the captain-facing renderer (pull, single place)
@@ -69,10 +70,9 @@
 # endpoint, or a harness.
 #
 # DEPENDENCIES
-# jq is required for the backlog projection. When jq is absent this library
-# reports FM_ATT_AVAILABLE=false with zero counts so a guard degrades to its
-# previous behavior instead of breaking a fleet operation, matching the existing
-# "missing jq -> silent no-op" degrade in bin/fm-turnend-guard.sh.
+# jq and a successful backlog projection are required to know the complete set.
+# When that derivation fails this library reports FM_ATT_AVAILABLE=false and
+# FM_ATT_UNKNOWN=true; callers must not treat it as an empty set.
 
 _FM_ATTENTION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_ATTENTION_LIB_DIR="."
 
@@ -321,11 +321,11 @@ fm_attention_json() {  # <fm-home>
   local home=$1 state data backlog_json rows
   state="${FM_STATE_OVERRIDE:-$home/state}"
   data="${FM_DATA_OVERRIDE:-$home/data}"
-  command -v jq >/dev/null 2>&1 || { printf '[]'; return 1; }
+  command -v jq >/dev/null 2>&1 || return 1
   backlog_json=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" \
-    "$FM_ATTENTION_SNAPSHOT_BIN" --backlog-json 2>/dev/null) \
-    || backlog_json='{"records":[]}'
-  [ -n "$backlog_json" ] || backlog_json='{"records":[]}'
+    "$FM_ATTENTION_SNAPSHOT_BIN" --backlog-json 2>/dev/null) || return 1
+  [ -n "$backlog_json" ] || return 1
+  printf '%s' "$backlog_json" | jq -e 'type == "object" and (.records | type == "array")' >/dev/null 2>&1 || return 1
   rows=$(fm_attention_status_rows "$state")
   printf '%s' "$rows" | jq -Rn \
     --argjson backlog "$backlog_json" \
@@ -477,7 +477,9 @@ _fm_attention_digest_of() {  # <newline-separated identities>
 
 # fm_attention_status <fm-home>
 # Populate, read-only, for the home at $1:
-#   FM_ATT_AVAILABLE       true/false - false when jq is missing (degrade quietly)
+#   FM_ATT_AVAILABLE       true/false - false when the complete set is unavailable
+#   FM_ATT_UNKNOWN         true/false - true when the complete set is unknowable
+#   FM_ATT_ERROR           human-readable unknown-state reason
 #   FM_ATT_JSON            the record array
 #   FM_ATT_COUNT           total open records
 #   FM_ATT_DECISIONS       open records needing the captain
@@ -486,28 +488,41 @@ _fm_attention_digest_of() {  # <newline-separated identities>
 #   FM_ATT_DECISION_DIGEST digest over decision identities only
 #   FM_ATT_NEW             true when the whole set changed since it was surfaced
 #   FM_ATT_DECISIONS_NEW   true when the decision set changed since it was surfaced
+#   FM_ATT_UNKNOWN_DIGEST  digest for bounding repeated unknown turn-end stops
+#   FM_ATT_UNKNOWN_NEW     true when the same unknown has not been surfaced
 # Always returns 0.
 fm_attention_status() {  # <fm-home>
-  local home=$1 state seen_att seen_dec ids='' dec_ids='' summary
+  local home=$1 state seen_att seen_dec seen_unknown ids='' dec_ids='' summary
   state="${FM_STATE_OVERRIDE:-$home/state}"
   # shellcheck disable=SC2034 # Read by callers (fm-guard.sh, fm-turnend-guard.sh, fm-attention.sh) after sourcing.
   FM_ATT_AVAILABLE=true
+  FM_ATT_UNKNOWN=false
+  FM_ATT_ERROR=''
   FM_ATT_JSON='[]'
   FM_ATT_COUNT=0
   FM_ATT_DECISIONS=0
   FM_ATT_WAITS=0
   FM_ATT_DIGEST=empty
   FM_ATT_DECISION_DIGEST=empty
+  FM_ATT_UNKNOWN_DIGEST=empty
   FM_ATT_NEW=false
   FM_ATT_DECISIONS_NEW=false
+  FM_ATT_UNKNOWN_NEW=false
 
-  if ! command -v jq >/dev/null 2>&1; then
-    # shellcheck disable=SC2034 # Read by callers after sourcing.
+  if ! command -v jq >/dev/null 2>&1 || ! FM_ATT_JSON=$(fm_attention_json "$home" 2>/dev/null) || [ -z "$FM_ATT_JSON" ]; then
     FM_ATT_AVAILABLE=false
+    FM_ATT_UNKNOWN=true
+    FM_ATT_ERROR='The open decision and wait list could not be determined.'
+    FM_ATT_JSON='{"unknown":true}'
+    FM_ATT_DIGEST=unknown
+    FM_ATT_DECISION_DIGEST=unknown
+    FM_ATT_UNKNOWN_DIGEST=$(_fm_attention_digest_of 'unknown:attention-derivation')
+    FM_ATT_NEW=true
+    FM_ATT_DECISIONS_NEW=true
+    seen_unknown=$(sed -n 's/^unknown=//p' "$state/.captain-attention-unknown" 2>/dev/null | tail -1 || true)
+    [ "$FM_ATT_UNKNOWN_DIGEST" = "$seen_unknown" ] || FM_ATT_UNKNOWN_NEW=true
     return 0
   fi
-  FM_ATT_JSON=$(fm_attention_json "$home" 2>/dev/null) || FM_ATT_JSON='[]'
-  [ -n "$FM_ATT_JSON" ] || FM_ATT_JSON='[]'
   # One jq pass for counts and both identity lists; this runs on every guarded
   # command, so it must not spawn a process per field.
   summary=$(printf '%s' "$FM_ATT_JSON" | jq -r '
@@ -522,6 +537,19 @@ fm_attention_status() {  # <fm-home>
     case "$FM_ATT_DECISIONS" in ''|*[!0-9]*) FM_ATT_DECISIONS=0 ;; esac
     ids=$(printf '%s\n' "$summary" | awk '/^--attention--$/{s=1;next} /^--decisions--$/{s=0} s')
     dec_ids=$(printf '%s\n' "$summary" | awk '/^--decisions--$/{s=1;next} s')
+  else
+    FM_ATT_AVAILABLE=false
+    FM_ATT_UNKNOWN=true
+    FM_ATT_ERROR='The open decision and wait list could not be determined.'
+    FM_ATT_JSON='{"unknown":true}'
+    FM_ATT_DIGEST=unknown
+    FM_ATT_DECISION_DIGEST=unknown
+    FM_ATT_UNKNOWN_DIGEST=$(_fm_attention_digest_of 'unknown:attention-derivation')
+    FM_ATT_NEW=true
+    FM_ATT_DECISIONS_NEW=true
+    seen_unknown=$(sed -n 's/^unknown=//p' "$state/.captain-attention-unknown" 2>/dev/null | tail -1 || true)
+    [ "$FM_ATT_UNKNOWN_DIGEST" = "$seen_unknown" ] || FM_ATT_UNKNOWN_NEW=true
+    return 0
   fi
   # shellcheck disable=SC2034 # Read by callers after sourcing.
   FM_ATT_WAITS=$((FM_ATT_COUNT - FM_ATT_DECISIONS))
@@ -534,16 +562,6 @@ fm_attention_status() {  # <fm-home>
   [ "$FM_ATT_DIGEST" = "$seen_att" ] || FM_ATT_NEW=true
   # shellcheck disable=SC2034 # Read by callers after sourcing.
   [ "$FM_ATT_DECISION_DIGEST" = "$seen_dec" ] || FM_ATT_DECISIONS_NEW=true
-  return 0
-}
-
-# fm_attention_mark_surfaced <state-dir> <attention-digest> <decision-digest>
-# Record that this exact set has reached a captain-facing surface. Bounded: one
-# two-line file, always overwritten, never appended.
-fm_attention_mark_surfaced() {  # <state-dir> <attention-digest> <decision-digest>
-  local state=$1 att=$2 dec=$3
-  [ -d "$state" ] || return 0
-  printf 'attention=%s\ndecisions=%s\n' "$att" "$dec" > "$state/.captain-attention" 2>/dev/null || true
   return 0
 }
 
@@ -565,5 +583,6 @@ fm_attention_home_idle() {  # <fm-home> [grace]
   fm_supervision_status "$state" "$grace"
   [ "$FM_SUP_NEEDED" = false ] || return 1
   fm_attention_status "$home"
+  [ "$FM_ATT_AVAILABLE" = true ] || return 1
   [ "$FM_ATT_COUNT" -eq 0 ]
 }

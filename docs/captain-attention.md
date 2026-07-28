@@ -17,9 +17,10 @@ That promotion is derived from the keyed event fold, never from reading the word
 ## Where it comes from
 
 `bin/fm-attention-lib.sh` is the single owner of the contract.
-It derives the open set from state firstmate already keeps durably - `data/backlog.md` and `state/*.status` - and stores nothing of its own except the surfaced-digest marker below.
+It derives the open set from state firstmate already keeps durably - `data/backlog.md` and `state/*.status` - and stores no item records of its own.
 It is therefore not a second status surface, and it is harness-agnostic and runtime-backend-agnostic: it never inspects a pane, an endpoint, or a harness.
 Backlog rows are read through `bin/fm-fleet-snapshot.sh --backlog-json`, which remains the one owner of backlog parsing.
+If that projection cannot be read, the result is unknown, not empty: renderers say that the open decision and wait list could not be determined, never print an all-clear, and never record the surfaced digest.
 
 A backlog row is a decision when it carries a captain hold with a reason and no unresolved blocker, whatever the item's own `kind` says.
 The documented way to gate ordinary work on the captain is `tasks-axi hold <id> --reason "<reason>" --kind captain`, which leaves `kind` as `ship`, so the snapshot's narrower `captain_actionable` flag is false for exactly the threads this contract exists for.
@@ -53,13 +54,15 @@ Keep that rule in step when either side changes it.
 
 ## Surfacing, deduplication, and false alarms
 
-`state/.captain-attention` records the digest of the set most recently rendered to a captain-facing surface.
-Rendering the default captain-facing view is surfacing: printing it records the digest as a side effect, so an ordinary read that changes nothing can never become an alarm.
+`state/.captain-attention` records the digest of the set most recently rendered by the default captain-facing view in `bin/fm-attention.sh`.
+Rendering that view is surfacing: after printing it, the renderer records the digest as a side effect, so an ordinary read that changes nothing can never become an alarm.
+Firstmate-facing projections such as `--brief`, `--json`, `--status`, and `--no-mark` are read-only.
 Identities carry no prose, so a delay re-reported hourly with new wording stays one item and surfaces once; if that delay clears and later opens again, its generation changes and it surfaces again.
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 
 The turn-end stop is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
 Declared waits never stop a turn.
+An unknown derivation can also stop a turn once, using a separate unknown marker so a broken projection cannot loop the session and cannot mark a decision set as surfaced.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables that stop without touching the watcher-liveness backstop, and `FM_GUARD_NO_ATTENTION=1` suppresses the guard section.
 
 ## The primary-activity blind spot
