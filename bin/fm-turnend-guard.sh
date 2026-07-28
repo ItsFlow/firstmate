@@ -28,6 +28,16 @@
 # primary checkout - the main home or a genuinely marked secondmate home - and
 # stay a silent, fast no-op inside child task worktrees.
 #
+# Two independent turn-end stops live here, in this order:
+#   1. supervision is off while work is in flight (the original backstop);
+#   2. a captain decision is open that has never reached a captain-facing
+#      surface (the captain's-call stop, bin/fm-attention-lib.sh).
+# The second only runs on the paths where the first ALLOWS, so the two never
+# stack and the load-bearing watcher alarm keeps priority. It is bounded by
+# construction rather than by a budget: it records the surfaced digest before
+# blocking, so one distinct set of open decisions costs at most one forced
+# continuation, on every harness.
+#
 # Loop-guard, codex/Grok (default) mode: never block twice in the same turn.
 # Codex uses stop_hook_active and Grok uses stopHookActive; typed camel-case
 # takes precedence when both spellings are present. A true value means the
@@ -70,6 +80,10 @@ CLAUDE_MODE=0
 SYNC_WAIT_MS=${FM_CLAUDE_AUTOARM_SYNC_WAIT_MS:-800}
 EPOCH_FRESH=${FM_CLAUDE_AUTOARM_EPOCH_FRESH:-15}
 BLOCK_BUDGET=${FM_CLAUDE_TURNEND_BLOCK_BUDGET:-3}
+# The captain-decision turn-end stop. On by default; set to 0 to disable it
+# without touching the watcher-liveness backstop.
+FM_ATTENTION_TURNEND_BLOCK=${FM_ATTENTION_TURNEND_BLOCK:-1}
+case "$FM_ATTENTION_TURNEND_BLOCK" in 1|true|TRUE|yes|YES) FM_ATTENTION_TURNEND_BLOCK=1 ;; *) FM_ATTENTION_TURNEND_BLOCK=0 ;; esac
 case "$SYNC_WAIT_MS" in ''|*[!0-9]*) SYNC_WAIT_MS=800 ;; esac
 case "$EPOCH_FRESH" in ''|*[!0-9]*|0) EPOCH_FRESH=15 ;; esac
 case "$BLOCK_BUDGET" in ''|*[!0-9]*|0) BLOCK_BUDGET=3 ;; esac
@@ -83,6 +97,8 @@ done
 
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
+# shellcheck source=bin/fm-attention-lib.sh
+. "$SCRIPT_DIR/fm-attention-lib.sh"
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
 
@@ -133,20 +149,61 @@ budget_reset() {
   rm -f "$BUDGET_FILE" 2>/dev/null || true
 }
 
+# A turn must not end while a captain decision the captain has never been shown
+# is sitting open. This is the second half of the meta-blindness fix: the
+# watcher-liveness predicate below counts state/*.meta, so a primary whose only
+# live work is an unanswered decision reaches every exit path with zero in
+# flight and ends silently.
+#
+# Strictly one block per DISTINCT decision set, and never a loop: the surfaced
+# digest is recorded BEFORE exiting, so the very next turn end sees the same set
+# as already surfaced and allows. Identities carry no prose, so re-declaring the
+# same wait cannot manufacture a new set. Declared waits deliberately do NOT
+# block - they need no captain action, and blocking on them would turn every
+# routine delay into an interruption; they surface through bin/fm-guard.sh and
+# the session-start digest instead. Any harness whose adapter honors this
+# script's exit status gets the behavior; nothing here is harness-specific.
+block_attention() {
+  local rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  fm_attention_mark_surfaced "$STATE" "$FM_ATT_DIGEST" "$FM_ATT_DECISION_DIGEST"
+  {
+    printf '●%s\n' "$rule"
+    printf "●  TURN WOULD END WITHOUT TELLING THE CAPTAIN - %s DECISION(S) ARE WAITING ON HIM\n" \
+      "$FM_ATT_DECISIONS"
+    "$SCRIPT_DIR/fm-attention.sh" --brief --no-mark 2>/dev/null | sed 's/^/●  /'
+    printf '●  Relay each one to the captain in plain language before ending this turn:\n'
+    printf '●  the concrete choice, why it matters now, what waiting costs, and your recommendation.\n'
+    printf '●  bin/fm-attention.sh prints exactly that, already captain-safe.\n'
+    printf '●%s\n' "$rule"
+  } >&2
+  exit 2
+}
+
+attention_would_block() {
+  [ "$FM_ATTENTION_TURNEND_BLOCK" -eq 1 ] || return 1
+  fm_attention_status "$FM_HOME"
+  [ "$FM_ATT_AVAILABLE" = true ] || return 1
+  [ "$FM_ATT_DECISIONS" -gt 0 ] || return 1
+  [ "$FM_ATT_DECISIONS_NEW" = true ]
+}
+
 fm_supervision_status "$STATE" "$GRACE"
 if [ "$CLAUDE_MODE" -eq 1 ]; then
   if [ "$FM_SUP_NEEDED" = false ]; then
     budget_reset
+    attention_would_block && block_attention
     exit 0
   fi
 else
   if [ "$FM_SUP_IN_FLIGHT" -eq 0 ]; then
     budget_reset
+    attention_would_block && block_attention
     exit 0
   fi
 fi
 if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
   budget_reset
+  attention_would_block && block_attention
   exit 0
 fi
 

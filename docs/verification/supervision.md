@@ -175,6 +175,64 @@ FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
 FM_GROK_STOP_LIVE_E2E=1 FM_GROK_NATIVE_BIN="$native_grok" FM_GROK_LEGACY_BIN="$pre_native_grok" tests/fm-grok-stop-live-e2e.test.sh
 ```
 
+## Captain's call: decisions and waits
+
+Review date: 2026-07-28.
+
+The captain-attention contract adds two captain-facing surfaces: a pull banner from `bin/fm-guard.sh`, which reaches every harness through ordinary tool output, and a push turn-end stop from `bin/fm-turnend-guard.sh`, which reaches each harness through that harness's existing Stop adapter.
+Every supported primary harness was reviewed against its own adapter rather than against the adapters active in the current fleet.
+
+| Primary harness | Stop adapter | Result for the captain's-call stop |
+| --- | --- | --- |
+| Claude | `.claude/settings.json` runs `bin/fm-turnend-guard.sh --claude` | Exit 2 with stderr blocks and shows the banner. The stop runs only on paths where the watcher predicate already allowed, and it never writes `state/.turnend-claude-blocks`, so the Claude block budget and the Stop-owned auto-arm cooperation are unchanged. |
+| Codex | `.codex/hooks.json` pipes the payload into the shared script | Exit 2 blocks with the banner, unchanged mechanism. |
+| Grok | `bin/fm-turnend-guard-grok.sh` | A native payload delegates exit 0 or 2 and stderr directly. The pre-native bounded resume now selects its headline from the guard's own banner, so a captain decision is no longer announced as a supervision lapse. |
+| OpenCode | `.opencode/plugins/fm-primary-turnend-guard.js`, passive `session.idle` | Exit 2 schedules exactly one bounded TUI follow-up, with the headline selected the same way. |
+| Pi and pi-signed | `.pi/extensions/fm-primary-turnend-guard.ts`, passive `agent_settled` | Same passive one-follow-up path and the same headline selection. |
+| Kimi | `bin/fm-kimi-turnend-hook.sh` | Not applicable: Kimi is a verified crew harness only. `bin/fm-supervision-instructions.sh` resolves no Kimi primary block, and the Kimi Stop hook only touches a crew task's turn-end marker. There is no primary integration surface to change. |
+| Unknown | `docs/supervision-protocols/unknown.md` | The pull banner still reaches the session through tool output; the push stop exits 2, which an unverified harness may ignore. Pull-side coverage is unaffected. |
+
+Every runtime backend - tmux, herdr, zellij, orca, cmux, and codex-app - is not applicable, and the integration surface was inspected rather than assumed.
+`bin/fm-attention-lib.sh` reads only `data/backlog.md` and `state/*.status` and calls no backend function.
+Backlog rows come from `bin/fm-fleet-snapshot.sh --backlog-json`, which returns before `task_json_lines`, the only backend-touching part of that script, so no endpoint or session-provider call happens on this path.
+The one derived value that could have varied by backend is a wait's next-check time; it is computed from `state/.last-watcher-beat`, which `bin/fm-watch.sh` touches every poll on every backend, and the cadence constant owned by `bin/fm-classify-lib.sh`.
+
+The captain-facing behavior and the primary-activity blind spot are covered deterministically:
+
+```sh
+bash tests/fm-attention.test.sh
+```
+
+Observed output:
+
+```text
+ok - a recorded captain explanation keeps its full text, and grouped metadata still parses
+ok - a briefed captain decision renders the choice, the stakes, the options, and a recommendation
+ok - a decision with no captain briefing renders honestly instead of faking plain language
+ok - a routine delay states what it awaits and when it is next checked
+ok - a delay that keeps repeating becomes a captain decision, and progress ends it
+ok - attention identities ignore wording, so a repeated delay surfaces once
+ok - ordinary reads and re-renders never become false alarms
+ok - an open item stays visible until it resolves, even once its interrupt is spent
+ok - a resolved decision clears from the captain view
+ok - an idempotent retry preserves a written briefing and an explicit update replaces it
+ok - unaccounted primary work reads as suspicious, not idle
+ok - a turn cannot end on an unsurfaced captain decision, and each set costs one stop
+ok - declared waits surface without ever stopping a turn
+ok - the captain view is plain language while the brief form keeps identifiers
+ok - an empty captain's call is stated, not omitted
+```
+
+Current entry points:
+
+```sh
+tests/fm-attention.test.sh
+tests/fm-turnend-guard.test.sh
+tests/fm-guard-stale-banner.test.sh
+tests/fm-decision-hold-lifecycle.test.sh
+tests/fm-fleet-snapshot-view.test.sh
+```
+
 ## Watcher continuity
 
 The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-07-24, all against isolated project and home state.

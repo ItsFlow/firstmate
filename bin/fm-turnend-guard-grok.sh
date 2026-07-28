@@ -74,10 +74,20 @@ RC=$?
 
 REASON=$(cat "$ERR" 2>/dev/null || true)
 [ -n "$REASON" ] || REASON='tasks in flight, no live watcher - repair missing watcher supervision according to the session-start operating block before ending the turn'
+# The shared guard has two independent stops and says which one fired in its own
+# banner (bin/fm-turnend-guard.sh owns both headlines). A captain decision that
+# has never been shown to the captain is not a supervision lapse, so this bounded
+# resume must not claim the watcher is down.
+HEADLINE='TURN WOULD END BLIND - supervision is off. Repair missing watcher supervision according to the session-start operating block before ending the turn.'
+case "$REASON" in
+  *'TURN WOULD END WITHOUT TELLING THE CAPTAIN'*)
+    HEADLINE='TURN WOULD END WITHOUT TELLING THE CAPTAIN. A decision is waiting on him that he has never been shown. Relay it in plain language before ending the turn.'
+    ;;
+esac
 # shellcheck source=bin/fm-operational-input.sh
 . "$ROOT/bin/fm-operational-input.sh"
 fm_operational_input_encode turn-end-guard \
-  "TURN WOULD END BLIND - supervision is off. Repair missing watcher supervision according to the session-start operating block before ending the turn.
+  "$HEADLINE
 
 $REASON" \
   PROMPT || exit 0

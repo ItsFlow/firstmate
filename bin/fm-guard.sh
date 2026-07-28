@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Watcher liveness and worktree-tangle guard, called by supervision scripts, by
-# fm-wake-drain.sh after it empties queued wakes, and by fm-session-start.sh in
-# read-only advisory mode whenever session-lock ownership was not verified.
+# Watcher liveness, captain's-call, and worktree-tangle guard, called by
+# supervision scripts, by fm-wake-drain.sh after it empties queued wakes, and by
+# fm-session-start.sh in read-only advisory mode whenever session-lock ownership
+# was not verified.
 # First, always warn if the firstmate primary checkout (FM_ROOT) is on a named
 # non-default branch, because that means firstmate-on-itself work landed in the
 # primary instead of an isolated worktree.
+# Second, surface a CHANGED captain's-call set (open decisions and declared
+# waits, bin/fm-attention-lib.sh) before any in-flight test, so a home holding
+# only unanswered captain work can no longer read as idle. Set
+# FM_GUARD_NO_ATTENTION=1 to suppress that section.
 # Then, if any task is in flight (a state/<id>.meta exists) and the watcher's
 # liveness beacon (state/.last-watcher-beat, touched every poll cycle) is
 # missing or older than FM_GUARD_GRACE seconds, prints a loud, clearly delimited
@@ -29,6 +34,10 @@ queue_pending=false
 READ_ONLY=${FM_GUARD_READ_ONLY:-0}
 case "$READ_ONLY" in 1|true|TRUE|yes|YES) READ_ONLY=1 ;; *) READ_ONLY=0 ;; esac
 CONTINUE_LINE=${FM_GUARD_CONTINUE_LINE:-This is a supervision warning only; the guarded operation WILL still run.}
+# Escape hatch for a caller that must stay silent about captain-facing state
+# (and for tests that assert the pre-existing watcher alarms in isolation).
+FM_GUARD_NO_ATTENTION=${FM_GUARD_NO_ATTENTION:-0}
+case "$FM_GUARD_NO_ATTENTION" in 1|true|TRUE|yes|YES) FM_GUARD_NO_ATTENTION=1 ;; *) FM_GUARD_NO_ATTENTION=0 ;; esac
 
 # Volatile, home-scoped episode marker: one line = the current stale-episode key.
 # Cleared when the home leaves the unhealthy state so a later episode re-arms.
@@ -40,6 +49,8 @@ STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
+# shellcheck source=bin/fm-attention-lib.sh
+. "$SCRIPT_DIR/fm-attention-lib.sh"
 
 # Deterministic episode key from beacon state: same continuous stale beacon
 # (or continuous absence) shares a key; a recovered-then-restale beacon gets a
@@ -138,6 +149,33 @@ if [ -n "$tangle_branch" ]; then
     fi
     printf '●%s\n' "$trule"
   } >&2
+fi
+
+# Captain's call, checked BEFORE the in-flight test below and independent of it.
+# This is where the old guard went blind: it returned early whenever no task
+# metadata existed, so a home whose only live work was an unanswered decision or
+# a standing delay produced no output at all and read as idle. The set is derived
+# by bin/fm-attention-lib.sh from the backlog and the status event logs, and is
+# surfaced once per CHANGE - identities carry no prose, so a delay re-reported
+# hourly with new wording stays one item and never re-alarms, and an ordinary
+# read that changes nothing prints nothing.
+if [ "$FM_GUARD_NO_ATTENTION" != 1 ]; then
+  fm_attention_status "$FM_HOME"
+  if [ "$FM_ATT_AVAILABLE" = true ] && [ "$FM_ATT_NEW" = true ] && [ "$FM_ATT_COUNT" -gt 0 ]; then
+    arule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    {
+      printf '●%s\n' "$arule"
+      printf "●  CAPTAIN'S CALL CHANGED - %s decision(s) and %s wait(s) are open\n" \
+        "$FM_ATT_DECISIONS" "$FM_ATT_WAITS"
+      "$SCRIPT_DIR/fm-attention.sh" --brief --no-mark 2>/dev/null | sed 's/^/●  /'
+      printf '●  Relay every open decision and wait to the captain in plain language in your next reply.\n'
+      printf '●%s\n' "$arule"
+    } >&2
+    # A read-only session must leave the record for the session that owns this
+    # home, exactly as it leaves the stale-watcher episode marker alone.
+    [ "$READ_ONLY" -eq 1 ] \
+      || fm_attention_mark_surfaced "$STATE" "$FM_ATT_DIGEST" "$FM_ATT_DECISION_DIGEST"
+  fi
 fi
 
 # Compute in-flight count and watcher-beacon freshness via the shared

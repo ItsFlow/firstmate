@@ -16,13 +16,14 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-fleet-view.sh`       | Render the fleet snapshot as a human Markdown view                                   |
 | `fm-tasklist-view.sh`    | Render the fleet snapshot as a live read-only task-list board                        |
 | `fm-bearings-snapshot.sh` | Project the fleet snapshot to the compact TOON bearings view; local-only unless `--include-prs` |
+| `fm-attention.sh`        | Print every open captain decision and meaningful wait in captain-safe plain language |
 | `fm-inbox-view.sh`       | Generate the read-only captain decision-and-review board HTML                        |
 | `fm-inbox-render.py`     | Render the inbox-board HTML from snapshot, card, full-text, and PR-state inputs      |
 | `fm-inbox-arm.sh`        | Write and register the captain-inbox answer relay                                    |
 | `fm-inbox-serve.sh`      | Generate, arm, serve, print, and verify the captain inbox board link                 |
 | `fm-update.sh`           | Fast-forward-only self-update of firstmate and secondmate homes from origin          |
 | `fm-backlog-handoff.sh`  | Validate and delegate queued backlog-item moves into a secondmate home               |
-| `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions                 |
+| `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions, with their captain briefing |
 | `fm-brief.sh`            | Scaffold ship, scout, secondmate-charter, and Herdr-lab briefs                       |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |

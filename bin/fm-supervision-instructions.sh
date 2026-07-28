@@ -155,6 +155,23 @@ repair_line() {
   esac
 }
 
+captain_call_line() {
+  local status decisions waits
+  status=$("$SCRIPT_DIR/fm-attention.sh" --status --no-mark 2>/dev/null) || return 0
+  decisions=${status#*decisions=}
+  decisions=${decisions%% *}
+  waits=${status#*waits=}
+  waits=${waits%% *}
+  case "$decisions" in ''|*[!0-9]*) return 0 ;; esac
+  case "$waits" in ''|*[!0-9]*) waits=0 ;; esac
+  if [ "$decisions" -eq 0 ] && [ "$waits" -eq 0 ]; then
+    printf '%s\n' "- Captain's call: nothing open."
+  else
+    printf -- '- Captain%s call: %s decision(s) need the captain and %s wait(s) are open; relay them in plain language with bin/fm-attention.sh before this turn ends.\n' \
+      "'s" "$decisions" "$waits"
+  fi
+}
+
 ordinary_wake_line() {
   case "$HARNESS" in
     claude)
@@ -203,6 +220,7 @@ if [ "$X_MODE" -eq 1 ]; then
 else
   printf '%s\n' '- X mode: inactive; use the default watcher cadence.'
 fi
+captain_call_line
 ordinary_wake_line
 printf '\n'
 render_snippet

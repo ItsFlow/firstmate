@@ -131,7 +131,7 @@ family_for_basename() {
     fm-test-run.test.sh|fm-test-isolation-proof.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
-    fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
+    fm-attention.test.sh|fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
     fm-supervision-events.test.sh|fm-turnend-guard.test.sh|fm-wake-daemon-lifecycle-e2e.test.sh|\
     fm-wake-queue.test.sh|fm-watch-checkpoint.test.sh|fm-watch-triage.test.sh|\
     fm-watcher-lock.test.sh)
@@ -677,6 +677,15 @@ families_for_changed_path() {
       ;;
     bin/fm-bearings-snapshot.sh|bin/fm-fleet-snapshot.sh|bin/fm-fleet-view.sh)
       printf '%s\n' snapshot-bearings
+      # The captain-attention contract reads the snapshot's backlog projection,
+      # so a backlog-parser change must re-run its coverage too.
+      printf '%s\n' watcher-wake-lock
+      ;;
+    bin/fm-attention.sh|bin/fm-attention-lib.sh)
+      printf '%s\n' watcher-wake-lock
+      printf '%s\n' snapshot-bearings
+      printf '%s\n' session-bootstrap
+      printf '%s\n' pure-contract-unit
       ;;
     bin/fm-inbox-view.sh|bin/fm-inbox-render.py)
       printf '%s\n' "__script__:fm-inbox-view.test.sh"

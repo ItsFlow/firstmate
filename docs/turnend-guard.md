@@ -36,6 +36,17 @@ A fresh leftover beacon blocks when the lock is missing, dead, or identity-misma
 `FM_GUARD_GRACE` controls beacon freshness and defaults to 300 seconds.
 If `jq` is missing or hook stdin is empty, the guard exits 0 because it cannot safely read loop-guard fields.
 
+## The second stop: an unsurfaced captain decision
+
+The predicate above counts `state/*.meta`, so a primary whose only live work is an unanswered captain decision reaches every allow path with zero in flight and ends silently.
+The guard therefore carries a second, independent stop, checked only on the paths where the supervision predicate already allows, so the two never stack and the watcher alarm keeps priority.
+It fires when a captain decision is open that has never reached a captain-facing surface, and it is bounded by construction rather than by a budget: it records the surfaced digest before blocking, so one distinct set of open decisions costs at most one forced continuation on any harness.
+Declared external delays never fire it.
+`FM_ATTENTION_TURNEND_BLOCK=0` disables it without touching the supervision backstop.
+[`captain-attention.md`](captain-attention.md) owns the contract, the set, and the surfacing rules.
+
+Each passive adapter selects its follow-up headline from the guard's own banner, so a captain decision is never announced as a supervision lapse.
+
 ## Harness integrations
 
 - Claude registers two `Stop` hooks in `.claude/settings.json`, both anchored through `CLAUDE_PROJECT_DIR`: `bin/fm-turnend-guard.sh --claude`, and `bin/fm-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.

@@ -19,11 +19,26 @@
 # Usage:
 #   fm-decision-hold.sh id <origin-id> <decision-key>
 #   fm-decision-hold.sh hold <origin-id> <decision-key> \
-#     --title <title> --reason <reason> [--repo <repo>]
+#     --title <title> --reason <reason> [--repo <repo>] \
+#     [--choice <text>] [--why-now <text>] [--cost-of-waiting <text>] \
+#     [--option <text>]... [--recommend <text>]
 #   fm-decision-hold.sh complete <origin-id> (--none | <decision-key>...)
 #   fm-decision-hold.sh verify <origin-id>
 #   fm-decision-hold.sh resolve <origin-id> <decision-key> \
 #     --decision-file <path> --routed-to <task-id> [--routed-to <task-id>...]
+#
+# THE CAPTAIN BRIEFING. A title and a one-line reason cannot carry what the
+# captain actually needs - the concrete choice, why it matters now, what waiting
+# costs, the real options, and a recommendation - so every renderer could only
+# truncate them. The briefing flags above record that plain language durably in
+# the hold body, in the grammar owned by bin/fm-attention-lib.sh, and
+# bin/fm-attention.sh renders it as the captain-facing explanation. Each value is
+# one line and must not contain a backslash, so the stored body round-trips
+# unambiguously. Supplying any briefing flag rewrites the briefing block and
+# preserves unrecognized body lines; supplying none leaves an existing briefing
+# untouched, so a plain idempotent retry never erases a written briefing. A hold
+# with no briefing still renders and is marked as not yet written, rather than
+# presenting a raw operational note as if it were plain language.
 #
 # `complete` is the shared investigation and visual-review completion gate.
 # `--none` is an explicit semantic attestation that the just-reviewed surface has
@@ -51,6 +66,9 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-attention-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-attention-lib.sh"  # captain-briefing grammar owner
 
 usage() {
   awk '
@@ -78,6 +96,49 @@ validate_one_line() {  # <label> <value>
   case "$value" in
     *$'\n'*|*$'\r'*) fail "$label must be one line" ;;
   esac
+}
+
+# A briefing value is stored inside the hold body, which tasks-axi round-trips
+# with backslash escapes. Banning the backslash keeps that decoding unambiguous
+# without restricting ordinary captain-facing prose.
+validate_brief_field() {  # <label> <value>
+  local label=$1 value=$2
+  validate_one_line "$label" "$value"
+  case "$value" in
+    *\\*) fail "$label must not contain a backslash" ;;
+  esac
+}
+
+# tasks-axi prints a body as one quoted line with \n and \" escapes; decode it
+# back to real lines. Backslashes are banned in briefing values, so the two
+# replacements below cannot collide.
+decode_body() {  # <shown-body>
+  local b=$1
+  b=${b#\"}
+  b=${b%\"}
+  printf '%s' "$b" | sed -e 's/\\n/\
+/g' -e 's/\\"/"/g'
+}
+
+# Keep only body lines this script does not own: the base Origin/Decision
+# key/State lines and the whole captain-briefing block are rebuilt from
+# arguments, everything else a human added is preserved verbatim.
+preserved_body_lines() {  # <decoded-body>
+  printf '%s\n' "$1" | awk \
+    -v header="$FM_ATTENTION_BRIEF_HEADER" \
+    -v choice="$FM_ATTENTION_BRIEF_CHOICE" \
+    -v why="$FM_ATTENTION_BRIEF_WHY" \
+    -v cost="$FM_ATTENTION_BRIEF_COST" \
+    -v option="$FM_ATTENTION_BRIEF_OPTION" \
+    -v recommend="$FM_ATTENTION_BRIEF_RECOMMEND" '
+    function starts(s, p) { return substr(s, 1, length(p)) == p }
+    $0 == header { next }
+    starts($0, choice) || starts($0, why) || starts($0, cost) { next }
+    starts($0, option) || starts($0, recommend) { next }
+    starts($0, "Origin: ") || starts($0, "Decision key: ") { next }
+    $0 == "State: awaiting captain decision." { next }
+    { print }
+  ' | sed -e '/^[[:space:]]*$/d'
 }
 
 sha256_text() {  # <text>
@@ -230,6 +291,8 @@ command_id() {
 
 command_hold() {
   local origin=${1:-} key=${2:-} title='' reason='' repo='' id show state kind existing_title body
+  local choice='' why='' cost='' recommend='' brief_given=0 brief_block='' preserved='' decoded opt
+  local -a options=()
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
   while [ "$#" -gt 0 ]; do
@@ -237,6 +300,11 @@ command_hold() {
       --title) shift; title=${1:-} ;;
       --reason) shift; reason=${1:-} ;;
       --repo) shift; repo=${1:-} ;;
+      --choice) shift; choice=${1:-}; brief_given=1 ;;
+      --why-now) shift; why=${1:-}; brief_given=1 ;;
+      --cost-of-waiting) shift; cost=${1:-}; brief_given=1 ;;
+      --option) shift; options+=("${1:-}"); brief_given=1 ;;
+      --recommend) shift; recommend=${1:-}; brief_given=1 ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -246,6 +314,15 @@ command_hold() {
   validate_one_line title "$title"
   validate_one_line reason "$reason"
   case "$reason" in *'('*|*')'*) fail "reason must not contain parentheses (tasks-axi hold contract)" ;; esac
+  if [ "$brief_given" -eq 1 ]; then
+    [ -z "$choice" ] || validate_brief_field choice "$choice"
+    [ -z "$why" ] || validate_brief_field why-now "$why"
+    [ -z "$cost" ] || validate_brief_field cost-of-waiting "$cost"
+    [ -z "$recommend" ] || validate_brief_field recommend "$recommend"
+    for opt in "${options[@]+"${options[@]}"}"; do validate_brief_field option "$opt"; done
+    brief_block=$(fm_attention_brief_lines "$choice" "$why" "$cost" "$recommend" \
+      "${options[@]+"${options[@]}"}")
+  fi
   require_tasks_axi
   origin_exists_here "$origin" || fail "origin $origin is not owned by the active home $FM_HOME"
   id=$(hold_id "$origin" "$key")
@@ -256,6 +333,17 @@ command_hold() {
     [ "$state" != "done" ] || fail "captain decision $id is already durably resolved; use a new decision key for a new decision"
     [ "$kind" = captain ] || fail "existing backlog identity $id is not kind captain"
     [ "$existing_title" = "$title" ] || fail "existing captain hold $id has a different title"
+    # No briefing flags means a plain idempotent retry: never touch the body, so
+    # an already-written captain briefing cannot be silently erased.
+    if [ "$brief_given" -eq 1 ]; then
+      decoded=$(decode_body "$(show_field "$show" body)")
+      preserved=$(preserved_body_lines "$decoded")
+      body=$(printf 'Origin: %s\nDecision key: %s\nState: awaiting captain decision.' "$origin" "$key")
+      [ -z "$brief_block" ] || body=$(printf '%s\n\n%s' "$body" "$brief_block")
+      [ -z "$preserved" ] || body=$(printf '%s\n\n%s' "$body" "$preserved")
+      tasks_axi update "$id" --body "$body" >/dev/null \
+        || fail "could not record the captain briefing on $id"
+    fi
   else
     if [ -z "$repo" ] && [ -f "$STATE/$origin.meta" ]; then
       repo=$(meta_value "$STATE/$origin.meta" project)
@@ -265,6 +353,7 @@ command_hold() {
     [ -n "$repo" ] || repo=firstmate
     validate_one_line repo "$repo"
     body=$(printf 'Origin: %s\nDecision key: %s\nState: awaiting captain decision.' "$origin" "$key")
+    [ -z "$brief_block" ] || body=$(printf '%s\n\n%s' "$body" "$brief_block")
     tasks_axi add "$id" "$title" --kind captain --repo "$repo" --body "$body" >/dev/null \
       || fail "could not create captain decision item $id"
   fi

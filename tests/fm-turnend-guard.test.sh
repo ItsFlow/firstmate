@@ -107,9 +107,16 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
+  # The captain's-call turn-end stop. fm-attention-lib.sh sources only these two
+  # small pure libraries; the backlog projection it shells out to is optional and
+  # degrades to an empty set, which is why fm-fleet-snapshot.sh is not installed
+  # here and a fixture with no backlog reports nothing open.
+  cp "$ROOT/bin/fm-attention-lib.sh" "$dir/bin/fm-attention-lib.sh"
+  cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/fm-classify-lib.sh"
+  cp "$ROOT/bin/fm-attention.sh" "$dir/bin/fm-attention.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
-  chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
+  chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh" "$dir/bin/fm-attention.sh"
 }
 
 mark_codex_hook_root() {

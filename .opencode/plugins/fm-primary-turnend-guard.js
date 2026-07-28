@@ -3,6 +3,26 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.js";
 
+// The shared guard has two independent stops and says which one fired in its own
+// banner (bin/fm-turnend-guard.sh owns both headlines). A captain decision that
+// has never been shown to the captain is not a supervision lapse, so the passive
+// follow-up must not claim the watcher is down.
+const CAPTAIN_CALL_HEADLINE = "TURN WOULD END WITHOUT TELLING THE CAPTAIN";
+
+function turnEndPrefix(stderr) {
+  if (typeof stderr === "string" && stderr.includes(CAPTAIN_CALL_HEADLINE)) {
+    return (
+      "TURN WOULD END WITHOUT TELLING THE CAPTAIN. " +
+      "A decision is waiting on him that he has never been shown. Relay it in plain language before ending the turn.\n\n"
+    );
+  }
+  return (
+    "TURN WOULD END BLIND - supervision is off. " +
+    "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n"
+  );
+}
+
+
 const COORDINATOR_KEY = "__firstmateOpenCodeWatchArm";
 
 let skipNextIdle = false;
@@ -78,9 +98,7 @@ export const FmPrimaryTurnendGuard = async ({ client, directory, worktree }) => 
         const text = await encodeFirstmateOperationalInput(
           root,
           "turn-end-guard",
-          "TURN WOULD END BLIND - supervision is off. " +
-            "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
-            result.stderr,
+          turnEndPrefix(result.stderr) + result.stderr,
         );
         await client.session.promptAsync({
           path: { id: sessionID },

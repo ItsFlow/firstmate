@@ -61,6 +61,25 @@ function runSessionstartNudge(): string {
   return result.stdout.trim();
 }
 
+// The shared guard has two independent stops and says which one fired in its own
+// banner (bin/fm-turnend-guard.sh owns both headlines). A captain decision that
+// has never been shown to the captain is not a supervision lapse, so the passive
+// follow-up must not claim the watcher is down.
+const CAPTAIN_CALL_HEADLINE = "TURN WOULD END WITHOUT TELLING THE CAPTAIN";
+
+function turnEndPrefix(stderr: string): string {
+  if (stderr.includes(CAPTAIN_CALL_HEADLINE)) {
+    return (
+      "TURN WOULD END WITHOUT TELLING THE CAPTAIN. " +
+      "A decision is waiting on him that he has never been shown. Relay it in plain language before ending the turn.\n\n"
+    );
+  }
+  return (
+    "TURN WOULD END BLIND - supervision is off. " +
+    "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n"
+  );
+}
+
 function runGuard(): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
     const child = spawn(`${root}/bin/fm-turnend-guard.sh`, {
@@ -148,9 +167,7 @@ export default function (pi: ExtensionAPI) {
     try {
       const content = encodeFirstmateOperationalInput(
         "turn-end-guard",
-        "TURN WOULD END BLIND - supervision is off. " +
-          "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
-          result.stderr,
+        turnEndPrefix(result.stderr) + result.stderr,
       );
       await pi.sendUserMessage(content, { deliverAs: "followUp" });
     } catch {
