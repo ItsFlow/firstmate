@@ -35,7 +35,7 @@
 #                       also run only when locked.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
-#   4. captain's call - every open captain decision and declared wait
+#   4. captain's call - every open captain decision and meaningful wait
 #                       (bin/fm-attention.sh), printed before the supervision
 #                       block and the context because it is this turn's second
 #                       work queue and must be seen before the first

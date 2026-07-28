@@ -9,9 +9,10 @@ This document is the operator reference for the contract that fixes it; each scr
 Every open item is exactly one of two things.
 
 - A **decision** needs the captain's own answer before the work can move.
-- A **wait** is a declared external delay that needs no captain action, but still owes the captain what is being awaited and when it is next checked.
+- A **wait** is a meaningful delay that needs no captain action yet, including a declared external delay or backlog work held on another blocker.
+  It still owes the captain what is being awaited and when it is next checked.
 
-A wait that has been re-declared past `FM_ATTENTION_WAIT_REDECLARES` (default 3) without ever clearing is promoted to a decision, because a delay that keeps repeating is no longer resolving on its own.
+A status-log wait that has been re-declared at least `FM_ATTENTION_WAIT_REDECLARES` times (default 3) without ever clearing is promoted to a decision, because a delay that keeps repeating is no longer resolving on its own.
 That promotion is derived from the keyed event fold, never from reading the wording of the delay, so it cannot fire on phrasing alone.
 
 ## Where it comes from
@@ -39,7 +40,7 @@ A partial briefing renders the fields that were written and names the missing on
 `bin/fm-attention.sh` is the single place firstmate reads the open set from and relays into chat, so no reply has to reconstruct it.
 Its default view is plain English with no internal identifiers or vocabulary, so it can be relayed as written; `--brief` is the firstmate-facing form and does carry identifiers, and is read-only.
 
-The same set also reaches ordinary replies through three integrated paths, so nothing depends on remembering to look:
+The same set also reaches ordinary replies through four integrated paths, so nothing depends on remembering to look:
 
 - `bin/fm-session-start.sh` prints it as its own digest section, before the supervision block and the context.
 - `bin/fm-guard.sh` surfaces a changed set on every guarded command and at the top of every wake-handling turn, before any in-flight test.
@@ -61,7 +62,7 @@ Identities carry no prose, so a delay re-reported hourly with new wording stays 
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 
 The turn-end stop is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
-Declared waits never stop a turn.
+Waits never stop a turn.
 An unknown derivation can also stop a turn once, using a separate unknown marker so a broken projection cannot loop the session and cannot mark a decision set as surfaced.
 That unknown marker resets as soon as the set is readable again, so a later derivation failure is surfaced as a fresh unknown.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables that stop without touching the watcher-liveness backstop, and `FM_GUARD_NO_ATTENTION=1` suppresses the guard section.

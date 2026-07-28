@@ -26,13 +26,15 @@
 # WHAT AN ATTENTION RECORD IS
 # Exactly two classes, and every open item is exactly one of them:
 #   decision - the captain's own answer is needed before the work can move.
-#   wait     - a declared external delay; no captain action, but the captain is
-#              still owed what is being awaited and when it is next checked.
-# A wait that has been re-declared FM_ATTENTION_WAIT_REDECLARES times (default
-# 3) without ever resolving is escalated to a decision, because a delay that
-# keeps repeating is by definition no longer clearing on its own. That escalation
-# is derived from the keyed event fold, never from reading the prose of the
-# wait, so it cannot false-positive on wording.
+#   wait     - a meaningful delay that needs no captain action yet, including a
+#              declared external delay or backlog work held on another blocker.
+#              The captain is still owed what is being awaited and when it is
+#              next checked.
+# A status-log wait that has been re-declared FM_ATTENTION_WAIT_REDECLARES times
+# (default 3) without ever resolving is escalated to a decision, because a delay
+# that keeps repeating is by definition no longer clearing on its own. That
+# escalation is derived from the keyed event fold, never from reading the prose
+# of the wait, so it cannot false-positive on wording.
 #
 # IDENTITY AND DEDUPLICATION
 # Every record carries a stable, TEXT-FREE identity:

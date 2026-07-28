@@ -25,8 +25,8 @@ An unmarked checkout or invalid marker falls through to the git-dir check.
 That check keeps crewmate and scout linked worktrees inert because their git dir differs from their git common dir.
 It also requires `AGENTS.md`, `bin/`, and the effective state directory.
 
-For an in-scope primary, the guard counts in-flight work from `state/*.meta`.
-The default cross-harness mode exits silently with no work in flight.
+For an in-scope primary, the supervision predicate counts in-flight work from `state/*.meta`.
+The default cross-harness mode allows with no work in flight, then still passes through the captain-attention stop below.
 Claude's `--claude` mode also treats `state/x-watch.check.sh` as supervision need, so X-mode relay polling remains guarded without an in-flight task.
 Otherwise it calls `fm_watcher_healthy <state-dir> <watch-path> [grace-seconds] [home]` from `bin/fm-wake-lib.sh`, the same identity-matched lock and fresh-beacon check used by `bin/fm-watch-arm.sh`.
 A stale beacon blocks even when a watcher pid is live.
@@ -38,11 +38,11 @@ If `jq` is missing or hook stdin is empty, the guard exits 0 because it cannot s
 
 ## The second stop: an unsurfaced captain decision
 
-The predicate above counts `state/*.meta`, so a primary whose only live work is an unanswered captain decision reaches every allow path with zero in flight and ends silently.
+The supervision predicate above counts `state/*.meta`, so a primary whose only live work is an unanswered captain decision would otherwise reach every allow path with zero in flight and end silently.
 The guard therefore carries a second, independent stop, checked only on the paths where the supervision predicate already allows, so the two never stack and the watcher alarm keeps priority.
 It fires when a captain decision is open that has never reached a captain-facing surface, and it is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
 If the captain-attention set cannot be derived, the allow path stops once with an explicit unknown-state banner and does not record the surfaced digest; after a readable derivation, a later failure is treated as a fresh unknown.
-Declared external delays never fire it.
+Waits never fire it.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables it without touching the supervision backstop.
 [`captain-attention.md`](captain-attention.md) owns the contract, the set, and the surfacing rules.
 

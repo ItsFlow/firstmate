@@ -6,7 +6,7 @@
 # First, always warn if the firstmate primary checkout (FM_ROOT) is on a named
 # non-default branch, because that means firstmate-on-itself work landed in the
 # primary instead of an isolated worktree.
-# Second, surface a CHANGED captain's-call set (open decisions and declared
+# Second, surface a CHANGED captain's-call set (open decisions and meaningful
 # waits, bin/fm-attention-lib.sh) before any in-flight test, so a home holding
 # only unanswered captain work can no longer read as idle. Set
 # FM_GUARD_NO_ATTENTION=1 to suppress that section.

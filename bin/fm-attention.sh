@@ -7,11 +7,12 @@
 #
 # Every open item is exactly one of two things:
 #   a decision - your answer is needed before the work can move;
-#   a wait     - a declared external delay, shown with what is being awaited and
-#                when it is next checked.
-# A delay that has been re-reported FM_ATTENTION_WAIT_REDECLARES times without
-# clearing is promoted to a decision, because it is no longer resolving on its
-# own. That promotion is derived from the event fold, never from the wording.
+#   a wait     - a meaningful delay that needs no captain action yet, shown with
+#                what is being awaited and when it is next checked.
+# A status-log wait that has been re-reported FM_ATTENTION_WAIT_REDECLARES times
+# without clearing is promoted to a decision, because it is no longer resolving
+# on its own. That promotion is derived from the event fold, never from the
+# wording.
 #
 # RENDERING IS SURFACING. Printing the default view records the current set's
 # digest in state/.captain-attention, so the guards stop
