@@ -5,7 +5,7 @@
 #   1. regenerates the board through bin/fm-inbox-view.sh (read-only),
 #   2. writes and registers a bounded watcher relay at state/inbox.check.sh so
 #      the captain's answers reach firstmate without anyone remembering to poll,
-#   3. serves the board on this machine's Tailscale address,
+#   3. serves the board on the advertised Tailscale address,
 #   4. prints and verifies the exact link to hand the captain.
 #
 # The relay is the fix for the captain's core complaint: with nothing polling
@@ -31,8 +31,7 @@
 #   --no-arm            serve without writing or registering the relay (the
 #                       answers will not reach firstmate on their own).
 #   --link-host <ip>    Tailscale address to advertise in the link. Default is
-#                       auto-detected from `ifconfig` (the tailscale CLI is
-#                       unreliable on this machine, per data/captain.md).
+#                       the first 100.* address reported by `ifconfig`.
 #   --cards <path>      passed through to fm-inbox-view.sh.
 #   --verify-prs        passed through to fm-inbox-view.sh.
 #   Any other fm-inbox-view.sh option can follow `--` and is passed through.
@@ -99,16 +98,16 @@ if [ "$ARM" -eq 1 ]; then
     || die "could not arm the answer relay"
 fi
 
-# Detect the Tailscale address unless one was supplied. The tailscale CLI reports
-# "logged out" on this machine even while the tunnel is up, so read it from the
-# interface list, which is authoritative (data/captain.md).
+# Detect the advertised Tailscale address unless one was supplied. The active
+# interface address is enough for Lavish links and does not depend on the
+# tailscale CLI's login-state reporting.
 if [ -z "$LINK_HOST" ]; then
   LINK_HOST=$(ifconfig 2>/dev/null | awk '/inet 100\./ {print $2; exit}')
 fi
 [ -n "$LINK_HOST" ] || die "could not determine a Tailscale address; pass --link-host <ip>"
 
-# Serve on all interfaces with the Tailscale link so the captain reaches it from
-# the MacBook Pro. Do not open a local browser on the mini.
+# Serve on all interfaces with the advertised link so the captain can reach it
+# from another device. Do not open a local browser on the serving machine.
 served=$(LAVISH_AXI_HOST=0.0.0.0 LAVISH_AXI_LINK_HOST="$LINK_HOST" LAVISH_AXI_NO_OPEN=1 \
   lavish-axi "$BOARD" 2>&1) || die "lavish-axi could not serve the board:
 $served"
