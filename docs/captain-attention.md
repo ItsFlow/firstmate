@@ -63,6 +63,7 @@ The marker bounds the interrupt only - an open item stays listed until it is ans
 The turn-end stop is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
 Declared waits never stop a turn.
 An unknown derivation can also stop a turn once, using a separate unknown marker so a broken projection cannot loop the session and cannot mark a decision set as surfaced.
+That unknown marker resets as soon as the set is readable again, so a later derivation failure is surfaced as a fresh unknown.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables that stop without touching the watcher-liveness backstop, and `FM_GUARD_NO_ATTENTION=1` suppresses the guard section.
 
 ## The primary-activity blind spot

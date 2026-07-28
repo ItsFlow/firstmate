@@ -476,7 +476,7 @@ _fm_attention_digest_of() {  # <newline-separated identities>
 }
 
 # fm_attention_status <fm-home>
-# Populate, read-only, for the home at $1:
+# Populate for the home at $1:
 #   FM_ATT_AVAILABLE       true/false - false when the complete set is unavailable
 #   FM_ATT_UNKNOWN         true/false - true when the complete set is unknowable
 #   FM_ATT_ERROR           human-readable unknown-state reason
@@ -558,6 +558,7 @@ fm_attention_status() {  # <fm-home>
 
   seen_att=$(sed -n 's/^attention=//p' "$state/.captain-attention" 2>/dev/null | tail -1 || true)
   seen_dec=$(sed -n 's/^decisions=//p' "$state/.captain-attention" 2>/dev/null | tail -1 || true)
+  rm -f "$state/.captain-attention-unknown" 2>/dev/null || true
   # shellcheck disable=SC2034 # Read by callers after sourcing.
   [ "$FM_ATT_DIGEST" = "$seen_att" ] || FM_ATT_NEW=true
   # shellcheck disable=SC2034 # Read by callers after sourcing.

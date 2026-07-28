@@ -287,6 +287,31 @@ test_failed_backlog_projection_is_unknown_not_empty() {
   pass "a failed backlog projection is unknown, not an empty captain call"
 }
 
+test_unknown_projection_surfaces_again_after_successful_derivation() {
+  local home snapshot out status
+  home=$(make_primary_home snapshot-unknown-reopens)
+  snapshot=$(failing_snapshot "$home")
+
+  out=$(FM_ATTENTION_SNAPSHOT_BIN="$snapshot" run_turnend "$home"); status=$?
+  expect_code 2 "$status" "the first unknown projection must stop the turn"
+  assert_contains "$out" 'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS' \
+    "the first unknown projection must surface explicitly"
+  assert_present "$home/state/.captain-attention-unknown" \
+    "the unknown stop must record its bounded marker"
+
+  out=$(run_turnend "$home"); status=$?
+  expect_code 0 "$status" "a readable projection with nothing open must allow"
+  [ -z "$out" ] || fail "the readable turn end produced output: $out"
+  assert_absent "$home/state/.captain-attention-unknown" \
+    "a successful derivation must reset the bounded unknown marker"
+
+  out=$(FM_ATTENTION_SNAPSHOT_BIN="$snapshot" run_turnend "$home"); status=$?
+  expect_code 2 "$status" "a fresh unknown after recovery must stop again"
+  assert_contains "$out" 'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS' \
+    "a fresh unknown after recovery must surface explicitly"
+  pass "an unknown projection surfaces again after a readable projection"
+}
+
 # --- waits: what is awaited, and when it is next checked ---------------------
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked() {
   local home out
@@ -716,6 +741,7 @@ test_a_captain_gated_work_item_is_a_decision_not_a_delay
 test_unbriefed_decision_is_honest_about_missing_language
 test_partial_briefing_renders_recorded_fields_and_names_missing_ones
 test_failed_backlog_projection_is_unknown_not_empty
+test_unknown_projection_surfaces_again_after_successful_derivation
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_repeated_wait_escalates_to_a_decision
 test_identities_ignore_wording_so_repeats_do_not_re_alarm

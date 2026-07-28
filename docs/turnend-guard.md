@@ -41,7 +41,7 @@ If `jq` is missing or hook stdin is empty, the guard exits 0 because it cannot s
 The predicate above counts `state/*.meta`, so a primary whose only live work is an unanswered captain decision reaches every allow path with zero in flight and ends silently.
 The guard therefore carries a second, independent stop, checked only on the paths where the supervision predicate already allows, so the two never stack and the watcher alarm keeps priority.
 It fires when a captain decision is open that has never reached a captain-facing surface, and it is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
-If the captain-attention set cannot be derived, the allow path stops once with an explicit unknown-state banner and does not record the surfaced digest.
+If the captain-attention set cannot be derived, the allow path stops once with an explicit unknown-state banner and does not record the surfaced digest; after a readable derivation, a later failure is treated as a fresh unknown.
 Declared external delays never fire it.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables it without touching the supervision backstop.
 [`captain-attention.md`](captain-attention.md) owns the contract, the set, and the surfacing rules.
