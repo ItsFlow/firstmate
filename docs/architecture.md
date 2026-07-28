@@ -69,6 +69,11 @@ It leads with a prominent bordered tangle banner, while `bin/fm-guard.sh` owns t
 On every verified primary harness, tracked hook integration gives the primary session a push-based backstop: when work is in flight and no identity-matched watcher lock with a fresh beacon is live, direct Stop hooks block and passive turn-end hooks force one bounded follow-up.
 The guard covers the main primary and genuinely marked secondmate homes, exempts child crewmate/scout worktrees, is loop-safe per harness, and is documented in [turnend-guard.md](turnend-guard.md).
 
+Both guards carry a second, independent concern that neither watcher liveness nor in-flight counting can express: whether the captain has been told what is waiting on him.
+`bin/fm-attention-lib.sh` derives that set from the backlog and the status event logs and gives it stable, prose-free identities, so the pull guard surfaces a changed set before any in-flight test and the turn-end guard stops a turn that would end on a decision the captain has never been shown.
+This is also where in-flight counting stops being the definition of an idle home: a primary holding only an unanswered decision has no metadata to count, so idleness is asserted against the derived set instead.
+[`captain-attention.md`](captain-attention.md) owns the contract, and `bin/fm-attention.sh` is the single captain-facing renderer.
+
 A presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) extends this for walk-away supervision: the `/afk` skill starts it through the tracked foreground helper `bin/fm-afk-start.sh`, after which the watcher reverts to daemon-managed one-shot mode and the daemon self-handles routine wakes in bash.
 The watcher and daemon share `bin/fm-classify-lib.sh` for captain-relevant status verbs, declared-external-wait vocabulary, and status-scan primitives.
 Terminal verbs remain captain-relevant, while a nonterminal progress verb cannot become terminal merely because its prose contains a legacy free-text token such as `merged`; bare legacy free-text lines remain compatible.
