@@ -44,6 +44,18 @@ usage() {
   sed -n '20,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
+require_option_value() {
+  local opt=$1 value=${2:-}
+  if [ -z "$value" ]; then
+    echo "fm-tasklist-view: $opt requires a value" >&2
+    usage >&2
+    exit 2
+  fi
+  case "$value" in
+    -*) echo "fm-tasklist-view: $opt requires a value" >&2; usage >&2; exit 2 ;;
+  esac
+}
+
 if [ "${FM_TASKLIST_INTERVAL+x}" = x ]; then
   INTERVAL=$FM_TASKLIST_INTERVAL
 else
@@ -51,6 +63,7 @@ else
 fi
 DONE_LIMIT="${FM_TASKLIST_DONE:-8}"
 WIDTH=""
+WIDTH_PROVIDED=0
 ONCE=0
 NO_CLEAR=0
 USE_COLOR=1
@@ -62,15 +75,12 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --once|-1) ONCE=1 ;;
     --interval|-n)
-      if [ "$#" -lt 2 ]; then
-        INTERVAL=""
-      else
-        shift
-        INTERVAL=$1
-      fi
+      require_option_value "$1" "${2:-}"
+      shift
+      INTERVAL=$1
       ;;
-    --width) shift; WIDTH="${1:-}" ;;
-    --done) shift; DONE_LIMIT="${1:-}" ;;
+    --width) require_option_value "$1" "${2:-}"; shift; WIDTH=$1; WIDTH_PROVIDED=1 ;;
+    --done) require_option_value "$1" "${2:-}"; shift; DONE_LIMIT=$1 ;;
     --no-clear) NO_CLEAR=1 ;;
     --no-color) USE_COLOR=0 ;;
     *) echo "fm-tasklist-view: unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -88,7 +98,15 @@ case "$INTERVAL" in ''|*[!0-9.]*) invalid_interval ;; esac
 [[ "$INTERVAL" =~ ^0*([.]0*)?$ ]] && invalid_interval
 case "$DONE_LIMIT" in ''|*[!0-9]*) echo "fm-tasklist-view: --done must be a non-negative integer" >&2; exit 2 ;; esac
 if [ -z "$WIDTH" ]; then WIDTH="${COLUMNS:-80}"; fi
-case "$WIDTH" in ''|*[!0-9]*|0) WIDTH=80 ;; esac
+case "$WIDTH" in
+  ''|*[!0-9]*|0)
+    if [ "$WIDTH_PROVIDED" -eq 1 ]; then
+      echo "fm-tasklist-view: --width must be a positive integer" >&2
+      exit 2
+    fi
+    WIDTH=80
+    ;;
+esac
 [ "$WIDTH" -lt 56 ] && WIDTH=56
 
 if [ -z "${FM_HOME+x}" ] || [ -z "${FM_HOME:-}" ]; then
@@ -130,22 +148,47 @@ read -r -d '' BOARD_JQ <<'JQ' || true
   | (($width - ($stw + $idw + $rpw + 7)) | if . < 12 then 12 else . end) as $tiw
   | (.tasks // []) as $tasks
   | (.backlog.records // []) as $recs
+  | (.main_inventory // {}) as $main_inventory
   | ([$recs[] | select(.state == "in_flight" and .structured)]) as $inflight_bl
-  | ([$inflight_bl[].id]) as $bl_order
   | ($inflight_bl | map({key:.id, value:.}) | from_entries) as $bl_by_id
   # Live workers are the truth for "what is being worked on now" (each has a
   # meta). Secondmates are persistent supervisors, not task-list work items.
   | ([$tasks[] | select(.kind != "secondmate")]) as $live
   | ($live | map({key:.id, value:.}) | from_entries) as $live_by_id
+  | ([$live[] | select(.current_state.state == "working") | .id]) as $working_ids
+  | ([$inflight_bl[]
+      | . as $record
+      | select($record.current_role != "held" or (($working_ids | index($record.id)) != null))
+      | $record.id]) as $bl_order
   # Priority order: backlog in-flight order first, then any live worker without
   # a backlog in-flight row (appended by id, snapshot already sorted them).
   | ( [ $bl_order[] | select($live_by_id[.] != null) | $live_by_id[.] ]
-      + [ $live[] | .id as $lid | select(($bl_order | index($lid)) == null) ] ) as $inflight
+      + [ $live[]
+          | . as $task
+          | .id as $lid
+          | select(($bl_order | index($lid)) == null)
+          | select((($bl_by_id[$lid].current_role // "") != "held") or $task.current_state.state == "working") ] ) as $inflight
   | ($inflight | map(select(.current_state.state == "working")) | length) as $parallel
 
   | ([$recs[] | select(.state == "queued" and .structured)]) as $queued
+  | (($main_inventory.orphan_in_flight // [])) as $orphan_ids
+  | ([$inflight_bl[]
+      | . as $record
+      | select(.current_role == "held" and (($working_ids | index($record.id)) == null))]) as $held_inflight
+  | ([$inflight_bl[]
+      | . as $record
+      | select(($orphan_ids | index($record.id)) != null)
+      | . + {tasklist_reason:"missing child metadata"}]) as $orphan_inflight
+  | (if (($main_inventory.unstructured_current_count // 0) > 0) then
+       [{id:"(main-inventory)",
+         title:($main_inventory.reason // "main inventory invalid"),
+         tasklist_reason:"unstructured rows: \($main_inventory.unstructured_current_count)"}]
+     else [] end) as $inventory_gates
   | ([$queued[] | select(((.unresolved_blocker_ids // []) | length) == 0 and (.hold_reason == null))]) as $ready
-  | ([$queued[] | select(((.unresolved_blocker_ids // []) | length) > 0 or (.hold_reason != null))]) as $upcoming
+  | ($inventory_gates
+     + $held_inflight
+     + $orphan_inflight
+     + [$queued[] | select(((.unresolved_blocker_ids // []) | length) > 0 or (.hold_reason != null))]) as $upcoming
   | ([$recs[] | select(.state == "done" and .structured)]) as $done
 
   | [
@@ -183,7 +226,8 @@ read -r -d '' BOARD_JQ <<'JQ' || true
       hrule,
       ( if ($upcoming | length) == 0 then "  \($dim)none\($rst)"
         else ($upcoming[]
-          | (if (.hold_reason != null) then "hold: \(.hold_reason)"
+          | (if (.tasklist_reason != null) then .tasklist_reason
+             elif (.hold_reason != null) then "hold: \(.hold_reason)"
              else "blocked-by: \(((.unresolved_blocker_ids // []) | join(", ")))" end) as $why
           | "  \(.id | cell($idw)) \(.title | cell($tiw))  \($dim)\($why | trunc($width - $idw - $tiw - 6))\($rst)"
         ) end ),

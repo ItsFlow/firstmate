@@ -131,6 +131,39 @@ test_board_bands_and_parallel() {
   pass "board composes all four bands with parallel, blocker, hold, and PR detail"
 }
 
+test_current_backlog_gates_are_visible() {
+  local home fakebin out held_count
+  home=$(make_home current-gates)
+  mkdir -p "$home/projects/held"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+free-form current note
+- [ ] held-observation - Held observation (repo: alpha) (kind: scout) (hold: watch production) (hold-kind: external)
+- [ ] held-paused - Held task with metadata (repo: alpha) (kind: ship) (hold: upstream release) (hold-kind: external)
+- [ ] orphan-ship - Structured worker without metadata (repo: alpha) (kind: ship)
+
+## Queued
+
+## Done
+EOF
+  fm_write_meta "$home/state/held-paused.meta" \
+    "window=firstmate:fm-held-paused" "worktree=$home/projects/held" "project=alpha" \
+    "harness=codex" "kind=ship" "mode=ship"
+  printf 'paused: waiting on upstream release\n' > "$home/state/held-paused.status"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW" --once --no-color --width 96)
+  assert_contains "$out" "nothing under way" "current gates without live workers must not fake in-flight work"
+  assert_contains "$out" "(main-inventory)" "unstructured current backlog rows are surfaced"
+  assert_contains "$out" "unstructured rows: 1" "inventory gate names the unstructured row count"
+  assert_contains "$out" "held-observation" "in-flight held records without metadata are surfaced"
+  assert_contains "$out" "hold: watch production" "in-flight held records retain their hold reason"
+  held_count=$(printf '%s\n' "$out" | grep -c 'held-paused' || true)
+  [ "$held_count" -eq 1 ] || fail "held task with metadata should appear once as an upcoming hold, got $held_count"
+  assert_contains "$out" "orphan-ship" "orphan in-flight records are surfaced"
+  assert_contains "$out" "missing child metadata" "orphan in-flight records name the missing metadata"
+  pass "current backlog gates remain visible without child metadata"
+}
+
 test_priority_ordering() {
   local home fakebin out cache_line report_line
   home=$(make_home priority)
@@ -199,6 +232,24 @@ test_interval_validation() {
   pass "interval validation rejects nonpositive and malformed values"
 }
 
+test_option_value_validation() {
+  local home rc out
+  home=$(make_home option-values)
+  out=$(FM_HOME="$home" "$VIEW" --width --once --interval 0 2>&1)
+  rc=$?
+  expect_code 2 "$rc" "--width followed by a flag must fail"
+  assert_contains "$out" "--width requires a value" "--width must not consume --once as its value"
+  out=$(FM_HOME="$home" "$VIEW" --width nope --once 2>&1)
+  rc=$?
+  expect_code 2 "$rc" "non-numeric --width must fail"
+  assert_contains "$out" "--width must be a positive integer" "--width must not silently default malformed user input"
+  out=$(FM_HOME="$home" "$VIEW" --done --once 2>&1)
+  rc=$?
+  expect_code 2 "$rc" "--done followed by a flag must fail"
+  assert_contains "$out" "--done requires a value" "--done must not consume --once as its value"
+  pass "value-taking options reject missing flag-like values"
+}
+
 # Provably read-only: a full render must not create, delete, or modify any file
 # under state/ or data/. The only child process is fm-fleet-snapshot.sh, itself
 # read-only, so a byte-level snapshot of both trees is identical afterward.
@@ -216,8 +267,10 @@ test_render_mutates_nothing() {
 
 test_empty_fleet_renders_gracefully
 test_board_bands_and_parallel
+test_current_backlog_gates_are_visible
 test_priority_ordering
 test_done_limit_and_width
 test_fail_closed_without_home
 test_interval_validation
+test_option_value_validation
 test_render_mutates_nothing
