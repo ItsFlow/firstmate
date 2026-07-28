@@ -87,7 +87,8 @@ add_row() {  # <home> <section> <line>
 }
 
 failing_snapshot() {  # <home>
-  local home=$1 bin="$home/bin/failing-snapshot"
+  local home=$1
+  local bin="$home/bin/failing-snapshot"
   printf '#!/usr/bin/env bash\nexit 42\n' > "$bin"
   chmod +x "$bin"
   printf '%s\n' "$bin"

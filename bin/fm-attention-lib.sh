@@ -224,7 +224,7 @@ _fm_attention_generation_set() {  # <generation-set> <key> <generation>
 # origin_open_decisions skips them.
 fm_attention_status_rows() {  # <state-dir>
   local state=$1 meta id status kind last verb key note n next line stripped pause resolve held
-  local decisions waits decision_gens wait_gens existing gen old_key old_verb old_gen old_n old_note
+  local decisions waits decision_gens wait_gens existing gen
   pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
@@ -254,7 +254,7 @@ fm_attention_status_rows() {  # <state-dir>
         needs-decision|blocked)
           existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
           if [ -n "$existing" ]; then
-            IFS=$'\t' read -r old_key old_verb gen old_note <<EOF
+            IFS=$'\t' read -r _ _ gen _ <<EOF
 $existing
 EOF
           else
@@ -281,7 +281,7 @@ EOF
         "$pause")
           existing=$(_fm_attention_row_for_key "$waits" "$key" || true)
           if [ -n "$existing" ]; then
-            IFS=$'\t' read -r old_key old_verb gen n old_note <<EOF
+            IFS=$'\t' read -r _ _ gen n _ <<EOF
 $existing
 EOF
             n=$((n + 1))
@@ -541,7 +541,9 @@ fm_attention_status() {  # <fm-home>
     dec_ids=$(printf '%s\n' "$summary" | awk '/^--decisions--$/{s=1;next} s')
   else
     FM_ATT_AVAILABLE=false
+    # shellcheck disable=SC2034 # Read by callers after sourcing.
     FM_ATT_UNKNOWN=true
+    # shellcheck disable=SC2034 # Read by callers after sourcing.
     FM_ATT_ERROR='The open decision and wait list could not be determined.'
     FM_ATT_JSON='{"unknown":true}'
     FM_ATT_DIGEST=unknown
@@ -550,6 +552,7 @@ fm_attention_status() {  # <fm-home>
     FM_ATT_NEW=true
     FM_ATT_DECISIONS_NEW=true
     seen_unknown=$(sed -n 's/^unknown=//p' "$state/.captain-attention-unknown" 2>/dev/null | tail -1 || true)
+    # shellcheck disable=SC2034 # Read by callers after sourcing.
     [ "$FM_ATT_UNKNOWN_DIGEST" = "$seen_unknown" ] || FM_ATT_UNKNOWN_NEW=true
     return 0
   fi
