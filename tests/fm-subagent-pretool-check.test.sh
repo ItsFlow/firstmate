@@ -251,9 +251,9 @@ test_missing_jq_stdin_transport_fails_open() {
 
 test_claude_hook_registration_preserves_bash_seatbelts() {
   jq -e '
-    [.hooks.PreToolUse[] | .hooks[].command]
-      | any(contains("fm-subagent-pretool-check.sh --claude"))
-  ' "$SETTINGS" >/dev/null || fail "Claude settings omit the delegation-shape PreToolUse guard"
+    [.hooks.PreToolUse[] | .hooks[].command | select(contains("fm-subagent-pretool-check.sh --claude"))]
+      | length == 1
+  ' "$SETTINGS" >/dev/null || fail "Claude settings must ship exactly one delegation-shape PreToolUse guard"
   # A stem-enumerating matcher repeats the fail-open-by-enumeration defect the
   # script exists to remove. Match all tools and let the script be the single
   # owner of classification.

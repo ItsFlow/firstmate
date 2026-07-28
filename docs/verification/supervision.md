@@ -2,9 +2,66 @@
 
 Audience: maintainer verification.
 
-This record supports current session-start, turn-end, watcher-continuity, and wedge-alarm guarantees.
+This record supports current session-start, turn-end, watcher-continuity, captain-inbox relay, and wedge-alarm guarantees.
 Operator behavior and active limits remain in the linked current guides.
 Task-specific chronology, temporary paths, run identifiers, and delivery transcripts remain in private reports or PR evidence.
+
+## Captain inbox answer relay
+
+Recorded 2026-07-25 against the operating home and isolated fixture homes.
+Focused deterministic suites were rerun on 2026-07-28.
+The operator behavior is owned by [inbox-board.md](../inbox-board.md), while exact flags remain in the script headers.
+
+Observed guarantees:
+
+- Generation is read-only: a content-hash manifest of `state/` and `data/` was byte-identical before and after `fm-inbox-view.sh`.
+- `fm-inbox-serve.sh --no-generate --link-host 127.0.0.1` against a fixture home armed the relay, served the board, and confirmed HTTP 200 for the generated session link.
+- The registered relay is accepted by `fm_custom_check_registered`, and a one-byte edit to the check file makes it rejected.
+- Run against a fixture board with no active Lavish session, the relay printed nothing, exited 0, and created no `state/inbox-answers/` directory.
+- Unsafe linked answer-drop paths are refused with a diagnostic wake and no write-through.
+- Shipped completion metadata is HTML-escaped while pull request links remain clickable.
+
+Current deterministic entry points:
+
+```sh
+tests/fm-inbox-view.test.sh
+tests/fm-inbox-arm.test.sh
+```
+
+Focused verification was rerun on 2026-07-28:
+
+```text
+$ bash tests/fm-inbox-view.test.sh
+ok - --help prints the header and exits 0
+ok - Decide selects on the captain hold alone and excludes blocked holds
+ok - full decision text is read through tasks-axi and can be opted out of
+ok - recorded pull requests render as unverified and landed ones stay out
+ok - unknown PR verification stays in Review and merge
+ok - shipped completion metadata escapes while PR links render
+ok - decision cards render in full and missing cards are declared
+ok - answers queue exactly once per question, on submit
+ok - free text answers stand alone and options are optional quick-picks
+ok - every decision offers a discuss/clarify path
+ok - a submitted answer is sent immediately with visible confirmation
+ok - no-project items get readable names instead of a generic badge
+ok - long titles wrap instead of overflowing the card
+ok - type and project filters are rendered for every section
+ok - board generation leaves state/ and data/ byte-identical
+ok - a missing explicit cards file refuses instead of rendering a silent gap
+
+$ bash tests/fm-inbox-arm.test.sh
+ok - --help prints the header and exits 0
+ok - a missing board path refuses
+ok - arming writes a mode-0700 relay and registers it for the watcher
+ok - editing the relay after registration invalidates it
+ok - the relay stays silent and starts no server while the board is unserved
+ok - the relay is bound to its board and a durable answer drop
+ok - arming refuses linked relay paths without writing through them
+ok - the relay shell-escapes paths and exports its target port
+ok - the relay emits one fixed wake line for feedback
+ok - the relay refuses linked answer drops with a diagnostic wake
+ok - serve passes its resolved port into the armed relay
+```
 
 ## Native session-start delivery
 

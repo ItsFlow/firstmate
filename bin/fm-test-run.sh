@@ -173,7 +173,8 @@ family_for_basename() {
     fm-afk-inject-e2e.test.sh|fm-afk-return.test.sh)
       printf '%s\n' afk
       ;;
-    fm-bearings-snapshot.test.sh|fm-fleet-snapshot-view.test.sh)
+    fm-bearings-snapshot.test.sh|fm-fleet-snapshot-view.test.sh|\
+    fm-inbox-view.test.sh|fm-inbox-arm.test.sh)
       printf '%s\n' snapshot-bearings
       ;;
     fm-backend-cmux.test.sh|fm-backend-cmux-smoke.test.sh)
@@ -676,6 +677,12 @@ families_for_changed_path() {
       ;;
     bin/fm-bearings-snapshot.sh|bin/fm-fleet-snapshot.sh|bin/fm-fleet-view.sh)
       printf '%s\n' snapshot-bearings
+      ;;
+    bin/fm-inbox-view.sh|bin/fm-inbox-render.py)
+      printf '%s\n' "__script__:fm-inbox-view.test.sh"
+      ;;
+    bin/fm-inbox-arm.sh|bin/fm-inbox-serve.sh)
+      printf '%s\n' "__script__:fm-inbox-arm.test.sh"
       ;;
     bin/fm-install-herdr.sh|bin/fm-install-treehouse.sh|bin/fm-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
