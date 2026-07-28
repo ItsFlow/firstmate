@@ -686,6 +686,10 @@ families_for_changed_path() {
       printf '%s\n' snapshot-bearings
       printf '%s\n' session-bootstrap
       printf '%s\n' pure-contract-unit
+      # fm-backend's old-vs-new conformance fixture copies the CURRENT
+      # fm-guard.sh and fm-decision-hold.sh into a synthetic old bin/, and both
+      # source this library, so that suite must be selected here too.
+      printf '%s\n' backend-dispatch
       ;;
     bin/fm-inbox-view.sh|bin/fm-inbox-render.py)
       printf '%s\n' "__script__:fm-inbox-view.test.sh"
