@@ -14,13 +14,9 @@
 # on its own. That promotion is derived from the event fold, never from the
 # wording.
 #
-# RENDERING IS SURFACING. Printing the default view records the current set's
-# digest in state/.captain-attention, so the guards stop
-# interrupting for a set that has already reached a captain-facing surface. An
-# ordinary read that changes nothing therefore never becomes a false alarm, and
-# an item that is answered simply drops out. --brief, --json, and --status never
-# mark. Open items stay rendered until they are resolved; the marker bounds the
-# interrupt, not the ledger.
+# A turn-end adapter may pass the actual assistant reply to --record-visible.
+# That mode validates the captain category, headline, and complete explanation
+# before recording a receipt. Every rendering mode is read-only.
 #
 # The default view is captain-safe plain English under AGENTS.md section 9: it
 # carries no internal identifiers or vocabulary and can be relayed as written.
@@ -28,15 +24,17 @@
 # read-only diagnostic, never a captain-facing surface.
 #
 # Usage:
-#   fm-attention.sh                 captain-facing view (marks surfaced)
+#   fm-attention.sh                 captain-facing view (read-only)
 #   fm-attention.sh --brief         one line per item, with identifiers (read-only)
 #   fm-attention.sh --json          the raw record array (read-only)
 #   fm-attention.sh --status        counts and change flags (read-only)
-#   fm-attention.sh --no-mark       render without recording the digest
+#   fm-attention.sh --record-visible validate an assistant reply from stdin
+#   fm-attention.sh --no-mark       compatibility alias for read-only rendering
 #   fm-attention.sh -h | --help
 #
-# Exit status is 0 whenever the set could be read; this is a reporting command,
-# never a gate. Exit 3 means the complete set could not be derived.
+# Exit status is 0 whenever the requested read or receipt succeeds.
+# Exit 3 means the complete set could not be derived, and exit 4 means the
+# supplied assistant reply did not contain the required visible records.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,13 +55,13 @@ usage() {
 }
 
 MODE=view
-MARK=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --brief) MODE=brief ;;
     --json) MODE=json ;;
     --status) MODE=status ;;
-    --no-mark) MARK=0 ;;
+    --record-visible) MODE=record-visible ;;
+    --no-mark) ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -71,12 +69,6 @@ while [ "$#" -gt 0 ]; do
 done
 
 fm_attention_status "$FM_HOME"
-
-mark_surfaced() {
-  [ -d "$STATE" ] || return 0
-  printf 'attention=%s\ndecisions=%s\n' "$FM_ATT_DIGEST" "$FM_ATT_DECISION_DIGEST" > "$STATE/.captain-attention" 2>/dev/null || true
-  return 0
-}
 
 render_unknown() {
   printf "CAPTAIN'S CALL\n"
@@ -105,6 +97,26 @@ if [ "$FM_ATT_AVAILABLE" != true ]; then
   esac
   exit 3
 fi
+
+record_visible() {
+  local message seen_att seen_dec wrote=0
+  message=$(cat 2>/dev/null || true)
+  seen_att=$(sed -n 's/^attention=//p' "$STATE/.captain-attention" 2>/dev/null | tail -1 || true)
+  seen_dec=$(sed -n 's/^decisions=//p' "$STATE/.captain-attention" 2>/dev/null | tail -1 || true)
+  if fm_attention_message_covers "$message" all; then
+    seen_att=$FM_ATT_DIGEST
+    wrote=1
+  fi
+  if fm_attention_message_covers "$message" decisions; then
+    seen_dec=$FM_ATT_DECISION_DIGEST
+    wrote=1
+  fi
+  [ "$wrote" -eq 1 ] || return 4
+  [ -d "$STATE" ] || return 4
+  printf 'attention=%s\ndecisions=%s\n' "$seen_att" "$seen_dec" > "$STATE/.captain-attention" 2>/dev/null || return 4
+  rm -f "$STATE/.captain-attention-unknown" 2>/dev/null || true
+  return 0
+}
 
 # Wrap free prose to a readable width under a fixed indent. Keeps a long
 # recorded explanation readable instead of running off the line.
@@ -169,12 +181,11 @@ field() {  # <index> <jq-path>
 
 render_view() {
   local total=$FM_ATT_COUNT n=$FM_ATT_DECISIONS w=$FM_ATT_WAITS i num=0
-  local class headline choice why cost recommend detail awaiting briefed escalated redeclares next opts missing
+  local class headline choice why cost recommend detail awaiting briefed escalated redeclares next opts missing combined
 
   printf "CAPTAIN'S CALL\n"
   if [ "$total" -eq 0 ]; then
     printf 'Nothing needs your decision, and nothing is waiting.\n'
-    [ "$MARK" -eq 1 ] && mark_surfaced
     return 0
   fi
   printf '%s you. %s waiting.\n' \
@@ -193,6 +204,7 @@ render_view() {
       escalated=$(field "$i" '.escalated')
       redeclares=$(field "$i" '.redeclares')
       detail=$(field "$i" '.detail')
+      combined=$(field "$i" '.combined_wait')
       printf '\n'
       wrap_prefixed "$(printf '%s. ' "$num")" 3 "$headline"
       if [ "$escalated" = true ]; then
@@ -234,6 +246,13 @@ EOF
         printf '   What was recorded:\n'
         wrap 5 "$detail"
       fi
+      if [ "$combined" = true ]; then
+        awaiting=$(field "$i" '.awaiting')
+        next=$(printf '%s' "$FM_ATT_JSON" | jq -r --argjson i "$i" '.[$i].next_check_seconds // "null"' 2>/dev/null)
+        printf '   Waiting for:\n'
+        wrap 5 "$awaiting"
+        printf '   Next check: %s\n' "$(next_check_phrase "$next")"
+      fi
       i=$((i + 1))
     done
   fi
@@ -256,11 +275,10 @@ EOF
     done
   fi
   printf '\nEverything above stays listed here until it is answered or clears.\n'
-  [ "$MARK" -eq 1 ] && mark_surfaced
 }
 
 render_brief() {
-  local total=$FM_ATT_COUNT i class id headline briefed escalated next mark
+  local total=$FM_ATT_COUNT i class id headline complete escalated next mark
   if [ "$total" -eq 0 ]; then
     printf "CAPTAIN'S CALL: nothing open.\n"
     return 0
@@ -272,13 +290,13 @@ render_brief() {
     class=$(field "$i" '.class')
     id=$(field "$i" '.id')
     headline=$(field "$i" '.headline')
-    briefed=$(field "$i" '.briefed')
+    complete=$(field "$i" '.briefing_complete')
     escalated=$(field "$i" '.escalated')
     mark=''
     if [ "$class" = decision ]; then
       if [ "$escalated" = true ]; then
         mark=' [repeated delay, no longer clearing]'
-      elif [ "$briefed" != true ]; then
+      elif [ "$complete" != true ]; then
         mark=' [no captain briefing recorded - add one with bin/fm-decision-hold.sh hold]'
       fi
     else
@@ -292,6 +310,10 @@ render_brief() {
 }
 
 case "$MODE" in
+  record-visible)
+    record_visible
+    exit $?
+    ;;
   json)
     printf '%s\n' "$FM_ATT_JSON"
     ;;

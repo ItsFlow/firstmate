@@ -8,12 +8,19 @@ import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.js";
 // has never been shown to the captain is not a supervision lapse, so the passive
 // follow-up must not claim the watcher is down.
 const CAPTAIN_CALL_HEADLINE = "TURN WOULD END WITHOUT TELLING THE CAPTAIN";
+const UNKNOWN_HEADLINE = "TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS";
 
 function turnEndPrefix(stderr) {
   if (typeof stderr === "string" && stderr.includes(CAPTAIN_CALL_HEADLINE)) {
     return (
       "TURN WOULD END WITHOUT TELLING THE CAPTAIN. " +
       "A decision is waiting on him that he has never been shown. Relay it in plain language before ending the turn.\n\n"
+    );
+  }
+  if (typeof stderr === "string" && stderr.includes(UNKNOWN_HEADLINE)) {
+    return (
+      "TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS. " +
+      "The open decision and wait list is unknown. Restore that list before reporting an all-clear.\n\n"
     );
   }
   return (
@@ -26,6 +33,7 @@ function turnEndPrefix(stderr) {
 const COORDINATOR_KEY = "__firstmateOpenCodeWatchArm";
 
 let skipNextIdle = false;
+const assistantMessages = new Map();
 
 function runProcess(command, args, input = "") {
   return new Promise((resolve) => {
@@ -62,16 +70,46 @@ function resolvePath(anchor) {
   }
 }
 
-function runGuard(root) {
+function runGuard(root, lastAssistantMessage) {
   if (!root) return Promise.resolve({ code: 0, stderr: "" });
-  return runProcess(`${root}/bin/fm-turnend-guard.sh`, [], '{"stop_hook_active":false}');
+  return runProcess(
+    `${root}/bin/fm-turnend-guard.sh`,
+    [],
+    JSON.stringify({ stop_hook_active: false, last_assistant_message: lastAssistantMessage }),
+  );
 }
 
 async function letWatchArmRun(sessionID, client) {
   const coordinator = globalThis[COORDINATOR_KEY];
-  if (!coordinator?.ensureArmed) return false;
-  const status = await coordinator.ensureArmed(sessionID, client);
-  return status === "armed" || status === "wake" || status === "failed";
+  if (!coordinator?.ensureArmed) return;
+  try {
+    await coordinator.ensureArmed(sessionID, client);
+  } catch {
+  }
+}
+
+function observeAssistantMessage(event) {
+  if (event.type === "message.updated") {
+    const info = event.properties?.info;
+    if (info?.role === "assistant" && info.sessionID && info.id) {
+      const current = assistantMessages.get(info.sessionID);
+      if (current?.messageID !== info.id) {
+        assistantMessages.set(info.sessionID, { messageID: info.id, parts: new Map() });
+      }
+    }
+    return;
+  }
+  if (event.type !== "message.part.updated") return;
+  const part = event.properties?.part;
+  if (part?.type !== "text" || part.synthetic || part.ignored) return;
+  const current = assistantMessages.get(part.sessionID);
+  if (!current || current.messageID !== part.messageID) return;
+  current.parts.set(part.id, String(part.text ?? ""));
+}
+
+function lastAssistantMessage(sessionID) {
+  const current = assistantMessages.get(sessionID);
+  return current ? [...current.parts.values()].join("\n") : "";
 }
 
 export const FmPrimaryTurnendGuard = async ({ client, directory, worktree }) => {
@@ -79,20 +117,24 @@ export const FmPrimaryTurnendGuard = async ({ client, directory, worktree }) => 
 
   return {
     event: async ({ event }) => {
+      observeAssistantMessage(event);
       if (event.type !== "session.idle") return;
 
+      const suppressRoutineFollowup = skipNextIdle;
       if (skipNextIdle) {
         skipNextIdle = false;
-        return;
       }
 
       const sessionID = event.properties?.sessionID;
       if (!sessionID) return;
 
-      if (await letWatchArmRun(sessionID, client)) return;
+      await letWatchArmRun(sessionID, client);
 
-      const result = await runGuard(root);
+      const result = await runGuard(root, lastAssistantMessage(sessionID));
       if (result.code !== 2) return;
+      const attentionStop =
+        result.stderr.includes(CAPTAIN_CALL_HEADLINE) || result.stderr.includes(UNKNOWN_HEADLINE);
+      if (suppressRoutineFollowup && !attentionStop) return;
 
       try {
         const text = await encodeFirstmateOperationalInput(

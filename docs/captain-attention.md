@@ -21,7 +21,7 @@ That promotion is derived from the keyed event fold, never from reading the word
 It derives the open set from state firstmate already keeps durably - `data/backlog.md` and `state/*.status` - and stores no item records of its own.
 It is therefore not a second status surface, and it is harness-agnostic and runtime-backend-agnostic: it never inspects a pane, an endpoint, or a harness.
 Backlog rows are read through `bin/fm-fleet-snapshot.sh --backlog-json`, which remains the one owner of backlog parsing.
-If that projection cannot be read, the result is unknown, not empty: renderers say that the open decision and wait list could not be determined, never print an all-clear, and never record the surfaced digest.
+If that projection cannot be read, the result is unknown, not empty: renderers say that the open decision and wait list could not be determined, never print an all-clear, and never record a captain receipt.
 
 A backlog row is a decision when it carries a captain hold with a reason and no unresolved blocker, whatever the item's own `kind` says.
 The documented way to gate ordinary work on the captain is `tasks-axi hold <id> --reason "<reason>" --kind captain`, which leaves `kind` as `ship`, so the snapshot's narrower `captain_actionable` flag is false for exactly the threads this contract exists for.
@@ -30,9 +30,9 @@ A captain hold whose blocker is still open is not answerable yet and stays a wai
 ## The durable captain briefing
 
 A title and a one-line reason cannot carry a decision, so every renderer could only truncate them.
-`bin/fm-decision-hold.sh hold` accepts `--choice`, `--why-now`, `--cost-of-waiting`, repeatable `--option`, and `--recommend`, and stores that plain language in the hold's own durable body.
-Supplying any briefing flag rewrites the briefing and preserves unrecognized body lines; supplying none leaves an existing briefing untouched, so an idempotent retry never erases one.
-A decision with no briefing still renders and is marked as not yet written, rather than presenting a raw operational note as if it were plain language.
+`bin/fm-decision-hold.sh hold` requires `--choice`, `--why-now`, `--cost-of-waiting`, at least one `--option`, and `--recommend` for every new hold and explicit revision, and stores that plain language in the hold's own durable body.
+Supplying the complete briefing rewrites it and preserves unrecognized body lines; supplying no briefing flags leaves an existing complete briefing untouched, so an idempotent retry never erases one.
+Legacy decisions with no briefing still render and are marked as incomplete, rather than presenting a raw operational note as if it were plain language or recording a captain receipt.
 A partial briefing renders the fields that were written and names the missing ones.
 
 ## Where the captain sees it
@@ -42,8 +42,8 @@ Its default view is plain English with no internal identifiers or vocabulary, so
 
 The same set also reaches ordinary replies through four integrated paths, so nothing depends on remembering to look:
 
-- `bin/fm-session-start.sh` prints it as its own digest section, before the supervision block and the context.
-- `bin/fm-guard.sh` surfaces a changed set on every guarded command and at the top of every wake-handling turn, before any in-flight test.
+- `bin/fm-session-start.sh` prints it as its own read-only digest section, before the supervision block and the context.
+- `bin/fm-guard.sh` renders a changed set read-only on every guarded command and at the top of every wake-handling turn, before any in-flight test.
 - `bin/fm-turnend-guard.sh` stops a turn that would end while a captain decision the captain has never been shown is open.
 - `bin/fm-supervision-instructions.sh` carries a one-line count in the emitted operating block.
 
@@ -55,16 +55,18 @@ Keep that rule in step when either side changes it.
 
 ## Surfacing, deduplication, and false alarms
 
-`state/.captain-attention` records the digest of the set most recently rendered by the default captain-facing view in `bin/fm-attention.sh`.
-Rendering that view is surfacing: after printing it, the renderer records the digest as a side effect, so an ordinary read that changes nothing can never become an alarm.
-Firstmate-facing projections such as `--brief`, `--json`, `--status`, and `--no-mark` are read-only.
+`state/.captain-attention` records the digest of the set most recently verified in an actual assistant reply by `bin/fm-attention.sh --record-visible`.
+Every rendering mode is read-only; only `--record-visible`, fed the assistant message by a turn-end adapter, can record a receipt, and it requires the correct category, headline, and every briefing fact.
+Firstmate-facing projections such as the default view, `--brief`, `--json`, `--status`, and `--no-mark` cannot spend the receipt.
 Identities carry no prose, so a delay re-reported hourly with new wording stays one item and surfaces once; if that delay clears and later opens again, its generation changes and it surfaces again.
+Decision receipts include the semantic briefing fields, so changing the choice, stakes, waiting cost, options, or recommendation reopens the receipt while a wording-only operational note does not.
+A keyed status decision and wait are folded into one combined decision alert.
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 
-The turn-end stop is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
-Waits never stop a turn.
+The turn-end stop remains active until the complete alert appears in an actual captain-visible assistant reply.
+Routine external and timed waits never stop a turn because they need no captain action; a repeated wait promoted to a decision does.
 An unknown derivation can also stop a turn once, using a separate unknown marker so a broken projection cannot loop the session and cannot mark a decision set as surfaced.
-That unknown marker resets as soon as the set is readable again, so a later derivation failure is surfaced as a fresh unknown.
+Read-only calls never reset the unknown marker; an explicitly mutating turn-end or receipt path resets it after a readable derivation, so a later derivation failure is surfaced as a fresh unknown.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables that stop without touching the watcher-liveness backstop, and `FM_GUARD_NO_ATTENTION=1` suppresses the guard section.
 
 ## The primary-activity blind spot

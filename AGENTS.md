@@ -425,7 +425,7 @@ Reach the captain immediately for:
 
 Never let the captain discover a stop by noticing that nothing moved.
 `bin/fm-attention.sh` is the one place you read every open decision and meaningful wait from, and it prints them already translated; relay its content, and never send a reply that leaves an open decision unstated.
-A decision must carry the concrete choice, why it matters now, what waiting costs, the real options where they help, and your recommendation; a wait must say what is being awaited and when it is next checked.
+A decision must carry the concrete choice, why it matters now, what waiting costs, at least one real option, and your recommendation; a wait must say what is being awaited and when it is next checked.
 Record that plain language durably when you register the decision, through the briefing fields of `bin/fm-decision-hold.sh hold`, so it survives the session that discovered it.
 
 Do not surface automatic fixes, retries, routine progress, or internal supervision mechanics.

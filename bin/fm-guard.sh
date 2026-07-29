@@ -176,11 +176,7 @@ if [ "$FM_GUARD_NO_ATTENTION" != 1 ]; then
       printf '●%s\n' "$arule"
       printf "●  CAPTAIN'S CALL CHANGED - %s decision(s) and %s wait(s) are open\n" \
         "$FM_ATT_DECISIONS" "$FM_ATT_WAITS"
-      if [ "$READ_ONLY" -eq 1 ]; then
-        "$SCRIPT_DIR/fm-attention.sh" --no-mark 2>/dev/null | sed 's/^/●  /'
-      else
-        "$SCRIPT_DIR/fm-attention.sh" 2>/dev/null | sed 's/^/●  /'
-      fi
+      "$SCRIPT_DIR/fm-attention.sh" --no-mark 2>/dev/null | sed 's/^/●  /'
       printf '●  Relay every open decision and wait to the captain in plain language in your next reply.\n'
       printf '●%s\n' "$arule"
     } >&2

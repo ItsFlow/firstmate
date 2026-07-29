@@ -33,15 +33,15 @@
 #   2. a captain decision is open that has never reached a captain-facing
 #      surface (the captain's-call stop, bin/fm-attention-lib.sh).
 # The second only runs on the paths where the first ALLOWS, so the two never
-# stack and the load-bearing watcher alarm keeps priority. It is bounded by
-# construction rather than by a budget: it renders the captain-facing view before
-# blocking, and that render records the surfaced digest, so one distinct set of
-# open decisions costs at most one forced continuation, on every harness.
+# stack and the load-bearing watcher alarm keeps priority. Its internal render is
+# read-only; only an actual assistant reply carrying the complete alert records
+# the captain receipt.
 #
-# Loop-guard, codex/Grok (default) mode: never block twice in the same turn.
+# Loop-guard, codex/Grok (default) mode: watcher recovery never blocks twice in the same turn.
 # Codex uses stop_hook_active and Grok uses stopHookActive; typed camel-case
 # takes precedence when both spellings are present. A true value means the
-# current stop attempt already follows a block, so this guard always allows it.
+# current stop attempt already follows a watcher-recovery block; the independent
+# captain-attention gate still evaluates it.
 # Passive harness adapters provide their own one-follow-up guard before calling
 # this script.
 # That bounds those harnesses to at most one forced continuation per turn -
@@ -121,6 +121,14 @@ STOP_HOOK_ACTIVE=$(printf '%s' "$PAYLOAD" | jq -r '
   else false
   end
 ' 2>/dev/null) || exit 0
+ASSISTANT_MESSAGE=$(printf '%s' "$PAYLOAD" | jq -r '
+  if has("lastAssistantMessage") then
+    if ((.lastAssistantMessage | type) == "string") then .lastAssistantMessage else error("lastAssistantMessage") end
+  elif has("last_assistant_message") then
+    if ((.last_assistant_message | type) == "string") then .last_assistant_message else error("last_assistant_message") end
+  else ""
+  end
+' 2>/dev/null) || exit 0
 # --- scope precisely to a PRIMARY checkout ----------------------------------
 # A genuinely-marked secondmate home runs its OWN primary firstmate session, so
 # force-INCLUDE it as a guarded primary whether treehouse leased it as a linked
@@ -134,6 +142,11 @@ STOP_HOOK_ACTIVE=$(printf '%s' "$PAYLOAD" | jq -r '
 # checkout has the two equal. Child worktrees never carry the gitignored marker,
 # so this exempts them while guarding every real secondmate home.
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
+
+if [ -n "$ASSISTANT_MESSAGE" ]; then
+  printf '%s' "$ASSISTANT_MESSAGE" | "$SCRIPT_DIR/fm-attention.sh" --record-visible >/dev/null 2>&1 || true
+fi
+fm_attention_status "$FM_HOME"
 
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/fm-wake-lib.sh
@@ -151,22 +164,13 @@ budget_reset() {
 # live work is an unanswered decision reaches every exit path with zero in
 # flight and ends silently.
 #
-# Strictly one block per DISTINCT decision set, and never a loop: the
-# captain-facing render records the surfaced digest before exiting, so the very
-# next turn end sees the same set as already surfaced and allows. Identities carry
-# no prose, so re-declaring the same wait cannot manufacture a new set. Declared
-# waits deliberately do NOT block - they need no captain action, and blocking on
-# them would turn every routine delay into an interruption; they surface through
-# bin/fm-guard.sh and the session-start digest instead. Any harness whose adapter
-# honors this script's exit status gets the behavior; nothing here is
-# harness-specific.
 block_attention() {
   local rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   {
     printf '●%s\n' "$rule"
     printf "●  TURN WOULD END WITHOUT TELLING THE CAPTAIN - %s DECISION(S) ARE WAITING ON HIM\n" \
       "$FM_ATT_DECISIONS"
-    "$SCRIPT_DIR/fm-attention.sh" 2>/dev/null | sed 's/^/●  /'
+    "$SCRIPT_DIR/fm-attention.sh" --no-mark 2>/dev/null | sed 's/^/●  /'
     printf '●  Relay each one to the captain in plain language before ending this turn:\n'
     printf '●  the concrete choice, why it matters now, what waiting costs, and your recommendation.\n'
     printf '●  bin/fm-attention.sh prints exactly that, already captain-safe.\n'
@@ -190,8 +194,8 @@ block_attention_unknown() {
 
 attention_gate() {
   [ "$FM_ATTENTION_TURNEND_BLOCK" -eq 1 ] || return 1
-  fm_attention_status "$FM_HOME"
   if [ "$FM_ATT_AVAILABLE" = true ]; then
+    rm -f "$STATE/.captain-attention-unknown" 2>/dev/null || true
     [ "$FM_ATT_DECISIONS" -gt 0 ] && [ "$FM_ATT_DECISIONS_NEW" = true ] && block_attention
     return 0
   fi

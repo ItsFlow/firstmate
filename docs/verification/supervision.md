@@ -187,8 +187,8 @@ Every supported primary harness was reviewed against its own adapter rather than
 | Claude | `.claude/settings.json` runs `bin/fm-turnend-guard.sh --claude` | Exit 2 with stderr blocks and shows the banner. The stop runs only on paths where the watcher predicate already allowed, and it never writes `state/.turnend-claude-blocks`, so the Claude block budget and the Stop-owned auto-arm cooperation are unchanged. |
 | Codex | `.codex/hooks.json` pipes the payload into the shared script | Exit 2 blocks with the banner, unchanged mechanism. |
 | Grok | `bin/fm-turnend-guard-grok.sh` | A native payload delegates exit 0 or 2 and stderr directly. The pre-native bounded resume now selects its headline from the guard's own banner, so a captain decision is no longer announced as a supervision lapse. |
-| OpenCode | `.opencode/plugins/fm-primary-turnend-guard.js`, passive `session.idle` | Exit 2 schedules exactly one bounded TUI follow-up, with the headline selected the same way. |
-| Pi and pi-signed | `.pi/extensions/fm-primary-turnend-guard.ts`, passive `agent_settled` | Same passive one-follow-up path and the same headline selection. |
+| OpenCode | `.opencode/plugins/fm-primary-turnend-guard.js`, passive `session.idle` | Watcher coordination runs first, then every idle evaluates the shared attention gate with the observed assistant reply; routine recovery stays bounded. |
+| Pi and pi-signed | `.pi/extensions/fm-primary-turnend-guard.ts`, passive `agent_settled` | Every settled reply evaluates the shared gate with evidence captured on `agent_end`; routine recovery stays bounded. |
 | Kimi | `bin/fm-kimi-turnend-hook.sh` | Not applicable: Kimi is a verified crew harness only. `bin/fm-supervision-instructions.sh` resolves no Kimi primary block, and the Kimi Stop hook only touches a crew task's turn-end marker. There is no primary integration surface to change. |
 | Unknown | `docs/supervision-protocols/unknown.md` | The pull banner still reaches the session through tool output; the push stop exits 2, which an unverified harness may ignore. Pull-side coverage is unaffected. |
 
@@ -203,25 +203,7 @@ The captain-facing behavior and the primary-activity blind spot are covered dete
 bash tests/fm-attention.test.sh
 ```
 
-Observed output:
-
-```text
-ok - a recorded captain explanation keeps its full text, and grouped metadata still parses
-ok - a briefed captain decision renders the choice, the stakes, the options, and a recommendation
-ok - a decision with no captain briefing renders honestly instead of faking plain language
-ok - a routine delay states what it awaits and when it is next checked
-ok - a delay that keeps repeating becomes a captain decision, and progress ends it
-ok - attention identities ignore wording, so a repeated delay surfaces once
-ok - ordinary reads and re-renders never become false alarms
-ok - an open item stays visible until it resolves, even once its interrupt is spent
-ok - a resolved decision clears from the captain view
-ok - an idempotent retry preserves a written briefing and an explicit update replaces it
-ok - unaccounted primary work reads as suspicious, not idle
-ok - a turn cannot end on an unsurfaced captain decision, and each set costs one stop
-ok - declared waits surface without ever stopping a turn
-ok - the captain view is plain language while the brief form keeps identifiers
-ok - an empty captain's call is stated, not omitted
-```
+The suite covers complete briefing creation, full escape preservation, semantic receipt revisions, combined keyed alerts, read-only marker behavior, actual assistant-delivery receipts, wait timing, resolution, and the primary-activity blind spot.
 
 Current entry points:
 

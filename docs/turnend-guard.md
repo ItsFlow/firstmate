@@ -40,8 +40,9 @@ If `jq` is missing or hook stdin is empty, the guard exits 0 because it cannot s
 
 The supervision predicate above counts `state/*.meta`, so a primary whose only live work is an unanswered captain decision would otherwise reach every allow path with zero in flight and end silently.
 The guard therefore carries a second, independent stop, checked only on the paths where the supervision predicate already allows, so the two never stack and the watcher alarm keeps priority.
-It fires when a captain decision is open that has never reached a captain-facing surface, and it is bounded by construction rather than by a budget: it renders the default captain-facing view before blocking, and that render records the surfaced digest, so one distinct set of open decisions costs at most one forced continuation on any harness.
-If the captain-attention set cannot be derived, the allow path stops once with an explicit unknown-state banner and does not record the surfaced digest; after a readable derivation, a later failure is treated as a fresh unknown.
+It fires when a captain decision is open that has not appeared under the correct headline and category with its complete briefing in an actual assistant reply.
+The banner's internal rendering is read-only; the turn-end adapter passes the assistant message back to `bin/fm-attention.sh --record-visible`, which is the only captain-receipt writer.
+If the captain-attention set cannot be derived, the allow path stops once with an explicit unknown-state banner and does not record a captain receipt; after a readable derivation, a later failure is treated as a fresh unknown.
 Waits never fire it.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables it without touching the supervision backstop.
 [`captain-attention.md`](captain-attention.md) owns the contract, the set, and the surfacing rules.
@@ -52,14 +53,14 @@ Each passive adapter selects its follow-up headline from the guard's own banner,
 
 - Claude registers two `Stop` hooks in `.claude/settings.json`, both anchored through `CLAUDE_PROJECT_DIR`: `bin/fm-turnend-guard.sh --claude`, and `bin/fm-claude-stop-autoarm.sh` with `asyncRewake: true` and `timeout: 28800`.
 - Codex registers a `Stop` hook in `.codex/hooks.json`, anchors the executable to the hook process working directory, verifies a Firstmate-shaped hook-bearing root, and passes the original payload to the shared guard.
-- OpenCode listens for `session.idle` in `.opencode/plugins/fm-primary-turnend-guard.js`, lets the watcher coordinator act first, and calls `client.session.promptAsync` once when the guard returns 2.
-- Pi listens for `agent_settled` in `.pi/extensions/fm-primary-turnend-guard.ts`, runs once per logical agent run, and calls `pi.sendUserMessage(..., { deliverAs: "followUp" })` once when the guard returns 2.
+- OpenCode observes the assistant message stream, listens for `session.idle` in `.opencode/plugins/fm-primary-turnend-guard.js`, lets the watcher coordinator act first, then always evaluates the shared attention gate and calls `client.session.promptAsync` when it returns 2.
+- Pi records the last assistant reply on `agent_end`, evaluates the shared gate on every `agent_settled`, and calls `pi.sendUserMessage(..., { deliverAs: "followUp" })` when it returns 2.
 - Grok registers a `Stop` hook in `.grok/hooks/fm-primary-turnend-guard.json` and delegates capability selection to `bin/fm-turnend-guard-grok.sh`.
   The tracked Claude Stop entries are inert when `GROK_AGENT` is present, so Grok's Claude-compatible settings loading cannot create a second continuation path.
 
 Claude and Codex can block a Stop directly with exit status 2 and stderr.
 Both payloads carry `stop_hook_active`.
-In the default Codex mode, a true value lets the second stop finish after one forced continuation.
+In the default Codex mode, a true value still passes through the attention gate, so a continuation cannot end without a validated captain receipt.
 
 Claude runs the guard with `--claude`, which ignores `stop_hook_active` and cooperates with the Stop-owned auto-arm.
 Claude Code sets `stop_hook_active=true` on every stop after any stop-hook continuation, including `asyncRewake` rewakes, which re-opened the 2026-07-21 blind window under the default one-shot behavior.
@@ -69,10 +70,10 @@ Every Claude allow path still passes through the captain-attention stop before i
 Any allow resets the budget.
 
 OpenCode, Pi, and pi-signed expose passive callbacks for this purpose.
-Their adapters fail open at the hook boundary to protect the user session but schedule one bounded follow-up when the predicate blocks.
+Their adapters fail open at the hook boundary to protect the user session and keep routine watcher recovery bounded, while a captain-attention follow-up is evaluated again until its reply contains the required alert.
 The generated prompts use the canonical `turn-end-guard` kind after the U+2063 `FIRSTMATE_OP: ` prefix, so Ahoy does not treat them as captain messages.
-Each passive adapter owns a loop latch.
-Pi keeps the latch across internal tool turns and clears it only when the generated follow-up settles or delivery fails.
+Each passive adapter owns a loop latch for routine watcher recovery.
+Pi keeps the latch across internal tool turns and clears it when the generated follow-up settles or delivery fails, but still evaluates captain attention on that settlement.
 OpenCode's forced follow-up is supported for persistent TUI sessions and remains fail-open in headless `opencode run`.
 
 Grok makes exactly one typed capability decision from each running Stop payload.

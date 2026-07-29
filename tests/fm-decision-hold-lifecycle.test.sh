@@ -102,6 +102,15 @@ tasks_in() {  # <home> <tasks-axi args...>
 run_decisions() {  # <home> <command args...>
   local home=$1
   shift
+  if [ "${1:-}" = hold ] && [ "$#" -ge 3 ] \
+    && ! grep -qE "^- \\[[ x]\\] ${2}-decision-${3} -" "$home/data/backlog.md"; then
+    set -- "$@" \
+      --choice "Choose how to resolve ${3}." \
+      --why-now "The reviewed work cannot proceed until ${3} is decided." \
+      --cost-of-waiting "The dependent work remains stopped." \
+      --option "Approve the proposed ${3} path." \
+      --recommend "Approve the proposed ${3} path."
+  fi
   PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
     FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" "$ROOT/bin/fm-decision-hold.sh" "$@"

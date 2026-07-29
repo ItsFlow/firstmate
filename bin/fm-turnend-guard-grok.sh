@@ -22,6 +22,8 @@ printf '%s' "$PAYLOAD" | jq -n --stream -e '
         $item[0][0] == "sessionId"
         or $item[0][0] == "stopHookActive"
         or $item[0][0] == "stop_hook_active"
+        or $item[0][0] == "lastAssistantMessage"
+        or $item[0][0] == "last_assistant_message"
       )
     ) then
       .[$item[0][0]] = ((.[$item[0][0]] // 0) + 1)
@@ -59,11 +61,9 @@ if [ "$CAPABILITY" = native ]; then
 fi
 
 # Only a genuine pre-native payload reaches this bounded compatibility path.
-[ -n "${GROK_TURNEND_GUARD_ACTIVE:-}" ] && exit 0
 SESSION_ID=$(printf '%s' "$PAYLOAD" | jq -er '
   .sessionId | select(type == "string" and length > 0)
 ' 2>/dev/null) || exit 0
-command -v grok >/dev/null 2>&1 || exit 0
 
 ERR=$(mktemp "${TMPDIR:-/tmp}/fm-turnend-grok.XXXXXX") || exit 0
 trap 'rm -f "$ERR"' EXIT
@@ -74,6 +74,13 @@ RC=$?
 
 REASON=$(cat "$ERR" 2>/dev/null || true)
 [ -n "$REASON" ] || REASON='tasks in flight, no live watcher - repair missing watcher supervision according to the session-start operating block before ending the turn'
+if [ -n "${GROK_TURNEND_GUARD_ACTIVE:-}" ]; then
+  case "$REASON" in
+    *'TURN WOULD END WITHOUT TELLING THE CAPTAIN'*|*'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS'*) ;;
+    *) exit 0 ;;
+  esac
+fi
+command -v grok >/dev/null 2>&1 || exit 0
 # The shared guard has two independent stops and says which one fired in its own
 # banner (bin/fm-turnend-guard.sh owns both headlines). A captain decision that
 # has never been shown to the captain is not a supervision lapse, so this bounded
@@ -82,6 +89,9 @@ HEADLINE='TURN WOULD END BLIND - supervision is off. Repair missing watcher supe
 case "$REASON" in
   *'TURN WOULD END WITHOUT TELLING THE CAPTAIN'*)
     HEADLINE='TURN WOULD END WITHOUT TELLING THE CAPTAIN. A decision is waiting on him that he has never been shown. Relay it in plain language before ending the turn.'
+    ;;
+  *'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS'*)
+    HEADLINE='TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS. The open decision and wait list is unknown. Restore that list before reporting an all-clear.'
     ;;
 esac
 # shellcheck source=bin/fm-operational-input.sh

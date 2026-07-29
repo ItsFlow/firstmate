@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression tests for the captain-attention contract: open decisions and
-# declared waits must reach the captain in plain language, exactly once per
-# distinct set, and must clear when they resolve.
+# declared waits must reach the captain in plain language, only captain-visible
+# delivery can record a receipt, and every item must clear when it resolves.
 #
 # The reproduction these tests are built from is the real task-board / fork-sync
 # case: a piece of work parked behind a fork synchronization the captain had to
@@ -63,18 +63,26 @@ run_guard() {  # <home>
     FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" "$GUARD" 2>&1
 }
 
-run_turnend() {  # <home>
-  local home=$1
-  printf '{"stop_hook_active":false,"session_id":"attention-test"}' \
+run_turnend() {  # <home> [<assistant-message>]
+  local home=$1 message=${2:-}
+  jq -cn --arg message "$message" \
+    '{stop_hook_active:false,session_id:"attention-test",last_assistant_message:$message}' \
     | FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_STATE_OVERRIDE="$home/state" \
       FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" "$TURNEND" 2>&1
 }
 
-run_turnend_claude() {  # <home> [<stop-hook-active>]
-  local home=$1 active=${2:-false}
-  printf '{"stop_hook_active":%s,"session_id":"attention-test"}' "$active" \
+run_turnend_claude() {  # <home> [<stop-hook-active>] [<assistant-message>]
+  local home=$1 active=${2:-false} message=${3:-}
+  jq -cn --argjson active "$active" --arg message "$message" \
+    '{stop_hook_active:$active,session_id:"attention-test",last_assistant_message:$message}' \
     | CLAUDECODE=1 FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_STATE_OVERRIDE="$home/state" \
       FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" "$TURNEND" --claude 2>&1
+}
+
+record_visible() {  # <home>
+  local home=$1 message
+  message=$(attention "$home" --no-mark)
+  printf '%s' "$message" | attention "$home" --record-visible
 }
 
 add_row() {  # <home> <section> <line>
@@ -97,7 +105,14 @@ failing_snapshot() {  # <home>
 add_unsurfaced_decision() {  # <home>
   local home=$1
   add_row "$home" Queued \
-    '- [ ] sample-decision-x - Approve the worker installs (repo: sample) (kind: captain) (since 2026-07-28) (hold: the machine needs approval before workers run there) (hold-kind: captain)'
+    '- [ ] sample-decision-x - Approve the worker installs (repo: sample) (kind: captain) (since 2026-07-28) (hold: the machine needs approval before workers run there) (hold-kind: captain)
+  Captain briefing v1:
+  Choice: Approve the worker installs now, or leave the machine unavailable.
+  Why now: The queued worker setup cannot proceed without the approval.
+  If this waits: The worker setup and its dependent work remain stopped.
+  Option: Approve the installs now.
+  Option: Leave the machine unavailable and reroute the work.
+  Recommended: Approve the installs now so the queued setup can proceed.'
 }
 
 add_unsupervised_work() {  # <home>
@@ -165,6 +180,25 @@ test_briefed_decision_renders_concretely() {
   assert_contains "$out" 'Sync the fork main from upstream now, then rebase and re-validate.' "an option body is missing"
   assert_not_contains "$out" 'fork-sync-decision-fork-main-sync' "the captain view must not carry internal identifiers"
   pass "a briefed captain decision renders the choice, the stakes, the options, and a recommendation"
+}
+
+test_new_decision_requires_a_complete_briefing() {
+  local home out status
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skip-ish: tasks-axi absent, complete-briefing validation not exercised"; return 0; }
+  home=$(make_home complete-required)
+  fm_write_meta "$home/state/fork-sync.meta" \
+    "window=fixture:fm-fork-sync" "project=$home/projects/firstmate" "kind=ship"
+  printf 'working: auditing\n' > "$home/state/fork-sync.status"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" hold fork-sync fork-main-sync \
+    --title 'Sync the fork main' --reason 'the board is waiting' --repo firstmate \
+    --choice 'Sync now or wait.' --recommend 'Sync now.' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "an incomplete initial briefing was accepted"
+  assert_contains "$out" 'why-now must not be empty' "the missing briefing fact was not named"
+  assert_not_contains "$(attention "$home" --no-mark --status)" 'decisions=1' \
+    "an incomplete initial briefing created a live decision"
+  pass "a new captain decision requires every briefing fact"
 }
 
 # The documented way to gate ordinary work on the captain is
@@ -300,6 +334,12 @@ test_unknown_projection_surfaces_again_after_successful_derivation() {
   assert_present "$home/state/.captain-attention-unknown" \
     "the unknown stop must record its bounded marker"
 
+  attention "$home" --status >/dev/null
+  attention "$home" --json >/dev/null
+  attention "$home" --no-mark >/dev/null
+  assert_present "$home/state/.captain-attention-unknown" \
+    "read-only attention calls must not reset an unknown marker"
+
   out=$(run_turnend "$home"); status=$?
   expect_code 0 "$status" "a readable projection with nothing open must allow"
   [ -z "$out" ] || fail "the readable turn end produced output: $out"
@@ -344,6 +384,23 @@ test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked() {
   pass "a routine delay states what it awaits and when it is next checked"
 }
 
+test_overdue_monitored_wait_is_due_now() {
+  local home next
+  home=$(make_home overdue-wait)
+  add_row "$home" 'In flight' \
+    '- [ ] task-board - Live watchable view of the task and priority list (repo: sample) (kind: ship) (since 2026-07-23)'
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=ship"
+  printf 'paused: waiting for the fork synchronization\n' > "$home/state/task-board.status"
+  touch -t 202001010000 "$home/state/task-board.status"
+  touch "$home/state/.last-watcher-beat"
+  next=$(FM_PAUSE_RESURFACE_SECS=1 attention "$home" --json | jq -r '.[0].next_check_seconds')
+  [ "$next" = 0 ] || fail "a monitored overdue wait reported next_check_seconds=$next"
+  assert_contains "$(FM_PAUSE_RESURFACE_SECS=1 attention "$home")" 'Next check: due now' \
+    "a monitored overdue wait must not be reported as unmonitored"
+  pass "a monitored overdue wait reports its next check as due now"
+}
+
 test_repeated_wait_escalates_to_a_decision() {
   local home out
   home=$(make_home escalating-wait)
@@ -377,6 +434,34 @@ test_repeated_wait_escalates_to_a_decision() {
   pass "a delay that keeps repeating becomes a captain decision, and progress ends it"
 }
 
+test_same_key_decision_and_wait_render_once_as_combined() {
+  local home out json
+  home=$(make_home combined-key)
+  add_row "$home" 'In flight' \
+    '- [ ] task-board - Live watchable view of the task and priority list (repo: sample) (kind: ship) (since 2026-07-23)'
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=ship"
+  {
+    printf 'needs-decision [key=release]: choose whether to keep the release parked\n'
+    printf 'paused [key=release]: waiting for legal review\n'
+    printf 'paused [key=release]: legal review is still pending\n'
+    printf 'paused [key=release]: waiting for the final legal answer\n'
+  } > "$home/state/task-board.status"
+  touch "$home/state/.last-watcher-beat"
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq 'length')" -eq 1 ] || fail "one keyed issue rendered more than once: $json"
+  [ "$(printf '%s' "$json" | jq -r '.[0] | "\(.class)|\(.identity)|\(.combined_wait)|\(.redeclares)"')" \
+    = 'decision|decision:task-board:release:1|true|3' ] \
+    || fail "the keyed decision and wait were not combined: $json"
+  out=$(attention "$home")
+  assert_contains "$out" 'choose whether to keep the release parked' "the decision fact disappeared"
+  assert_contains "$out" 'Waiting for:' "the combined alert omitted its wait"
+  assert_contains "$out" 'waiting for the final legal answer' "the combined alert omitted the current wait fact"
+  assert_not_contains "$out" 'WAITING ON SOMETHING ELSE' \
+    "the same keyed issue was rendered under a second category"
+  pass "one keyed issue renders once as a combined decision and wait"
+}
+
 # --- deduplication ----------------------------------------------------------
 test_identities_ignore_wording_so_repeats_do_not_re_alarm() {
   local home first second
@@ -396,6 +481,7 @@ test_identities_ignore_wording_so_repeats_do_not_re_alarm() {
   # The whole point of a stable identity: the guard interrupts once, not once per
   # re-declaration.
   assert_contains "$(run_guard "$home")" "CAPTAIN'S CALL CHANGED" "the first changed set must surface"
+  record_visible "$home"
   printf 'paused: third recheck unchanged, worded differently again\n' >> "$home/state/task-board.status"
   assert_not_contains "$(run_guard "$home")" "CAPTAIN'S CALL" "a re-worded repeat must not surface again"
   pass "attention identities ignore wording, so a repeated delay surfaces once"
@@ -412,14 +498,14 @@ test_reopened_status_items_get_new_generation_identity() {
   touch "$home/state/.last-watcher-beat"
 
   first=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
-  attention "$home" >/dev/null
+  record_visible "$home"
   printf 'working: unblocked for implementation\npaused: second external wait\n' >> "$home/state/task-board.status"
   second=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
   [ "$first" != "$second" ] || fail "a reopened wait reused its previous identity: $first"
   assert_contains "$second" 'wait:task-board:default:2' "a reopened wait must carry a new generation"
   assert_contains "$(attention "$home" --no-mark --status)" 'new=true' \
     "a reopened wait must re-surface even if the earlier generation was surfaced"
-  attention "$home" >/dev/null
+  record_visible "$home"
   printf 'paused: same wait with new wording\n' >> "$home/state/task-board.status"
   third=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
   [ "$second" = "$third" ] || fail "a still-open wait changed identity on rewording: $second vs $third"
@@ -431,7 +517,6 @@ test_reopened_status_items_get_new_generation_identity() {
     "window=fixture:fm-api-shape" "project=$home/projects/sample" "kind=ship"
   printf 'needs-decision: choose the API shape\n' > "$home/state/api-shape.status"
   first=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
-  attention "$home" >/dev/null
   printf 'resolved: the first shape was chosen\nneeds-decision: choose the migration shape\n' >> "$home/state/api-shape.status"
   second=$(attention "$home" --no-mark --json | jq -r '.[0].identity')
   [ "$first" != "$second" ] || fail "a reopened status decision reused its previous identity: $first"
@@ -443,8 +528,7 @@ test_reopened_status_items_get_new_generation_identity() {
 test_brief_form_never_spends_captain_surface_marker() {
   local home out status
   home=$(make_primary_home brief-no-mark)
-  add_row "$home" Queued \
-    '- [ ] sample-decision-x - Approve the worker installs (repo: sample) (kind: captain) (since 2026-07-28) (hold: the machine needs approval before workers run there) (hold-kind: captain)'
+  add_unsurfaced_decision "$home"
   attention "$home" --brief >/dev/null
   assert_absent "$home/state/.captain-attention" \
     "the firstmate-facing brief form must not record the surfaced digest"
@@ -453,12 +537,14 @@ test_brief_form_never_spends_captain_surface_marker() {
   expect_code 2 "$status" "brief output must not satisfy the captain-facing turn-end stop"
   assert_contains "$out" 'NEEDS YOUR DECISION' "the turn-end stop must render the captain-safe view"
   out=$(run_turnend "$home"); status=$?
-  expect_code 0 "$status" "the captain-safe turn-end render must record the surfaced digest"
-  [ -z "$out" ] || fail "the second turn end produced output: $out"
+  expect_code 2 "$status" "an internal turn-end render must not record a captain receipt"
+  out=$(run_turnend "$home" "$(attention "$home" --no-mark)"); status=$?
+  expect_code 0 "$status" "the actual captain-visible reply must record the surfaced digest"
+  [ -z "$out" ] || fail "the captain-visible turn end produced output: $out"
   pass "the brief form never spends the captain-facing surface marker"
 }
 
-test_guard_banner_uses_captain_safe_rendering_to_mark() {
+test_guard_banner_never_spends_captain_receipt() {
   local home out status
   home=$(make_home guard-captain-safe)
   add_row "$home" Queued \
@@ -467,8 +553,8 @@ test_guard_banner_uses_captain_safe_rendering_to_mark() {
   assert_contains "$out" 'NEEDS YOUR DECISION' "the guard banner must include the captain-safe decision section"
   assert_not_contains "$out" 'sample-decision-x' "the guard banner must not use the identifier-only brief form"
   status=$(attention "$home" --no-mark --status)
-  assert_contains "$status" 'new=false' "the guard must let the captain-safe render spend the marker"
-  pass "the guard banner renders the captain-safe view and records that surface"
+  assert_contains "$status" 'new=true' "an internal guard render must leave the captain receipt open"
+  pass "the guard banner renders the captain-safe view without spending its receipt"
 }
 
 test_only_the_captain_renderer_writes_the_surface_marker() {
@@ -494,17 +580,16 @@ EOF
 test_ordinary_reads_do_not_become_false_alarms() {
   local home out
   home=$(make_home quiet-reads)
-  add_row "$home" Queued \
-    '- [ ] sample-decision-x - Approve the change (repo: sample) (kind: captain) (since 2026-07-28) (hold: a reason) (hold-kind: captain)'
+  add_unsurfaced_decision "$home"
   assert_contains "$(run_guard "$home")" "CAPTAIN'S CALL CHANGED" "the first changed set must surface"
   # Reading the set, listing it, and running the guard again are all ordinary
   # conductor reads and must be silent.
   attention "$home" --no-mark --json >/dev/null
   attention "$home" --no-mark --status >/dev/null
   out=$(run_guard "$home")
-  [ -z "$out" ] || fail "an ordinary read produced a false alarm: $out"
-  # And rendering must not resurrect the alarm either: rendering IS surfacing.
-  attention "$home" >/dev/null
+  assert_contains "$out" "CAPTAIN'S CALL CHANGED" \
+    "an ordinary read must not spend the captain-visible receipt"
+  record_visible "$home"
   out=$(run_guard "$home")
   [ -z "$out" ] || fail "rendering the ledger produced a false alarm: $out"
   pass "ordinary reads and re-renders never become false alarms"
@@ -513,11 +598,10 @@ test_ordinary_reads_do_not_become_false_alarms() {
 test_ledger_keeps_showing_an_open_item_after_it_was_surfaced() {
   local home out
   home=$(make_home persistent)
-  add_row "$home" Queued \
-    '- [ ] sample-decision-x - Approve the change (repo: sample) (kind: captain) (since 2026-07-28) (hold: a reason) (hold-kind: captain)'
-  attention "$home" >/dev/null
+  add_unsurfaced_decision "$home"
+  record_visible "$home"
   out=$(attention "$home" --no-mark)
-  assert_contains "$out" 'Approve the change' \
+  assert_contains "$out" 'Approve the worker installs' \
     "an open decision must stay listed after it was surfaced; the marker bounds the interrupt, not the ledger"
   pass "an open item stays visible until it resolves, even once its interrupt is spent"
 }
@@ -536,6 +620,9 @@ test_resolution_clears_the_item() {
     --reason 'the board cannot be rebased until the fork main matches upstream' \
     --repo firstmate \
     --choice 'Sync now, or rebase onto the current fork main.' \
+    --why-now 'The board is ready to rebase now.' \
+    --cost-of-waiting 'The board remains blocked.' \
+    --option 'Sync now.' \
     --recommend 'Sync now.' >/dev/null || fail "could not register the decision"
   assert_contains "$(attention "$home" --no-mark --status)" 'decisions=1' "the decision should be open"
 
@@ -563,6 +650,9 @@ test_retry_never_erases_a_written_briefing() {
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'a reason' --repo firstmate \
     --choice 'Sync now, or rebase onto the current fork main.' \
+    --why-now 'The board is ready to rebase now.' \
+    --cost-of-waiting 'The board remains blocked.' \
+    --option 'Sync now.' \
     --recommend 'Sync now.' >/dev/null || fail "could not register the decision"
   # A plain idempotent retry carries no briefing flags and must leave the written
   # briefing alone.
@@ -575,10 +665,78 @@ test_retry_never_erases_a_written_briefing() {
   # Supplying briefing flags updates it.
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'a reason' \
+    --choice 'Sync now, or rebase onto the current fork main.' \
+    --why-now 'The board is ready to rebase now.' \
+    --cost-of-waiting 'The board remains blocked.' \
+    --option 'Rebase onto the current fork main instead.' \
     --recommend 'Rebase onto the current fork main instead.' >/dev/null || fail "briefing update failed"
   out=$(attention "$home" --no-mark --json | jq -r '.[0].recommendation')
   [ "$out" = 'Rebase onto the current fork main instead.' ] || fail "briefing update did not take: $out"
   pass "an idempotent retry preserves a written briefing and an explicit update replaces it"
+}
+
+test_briefing_revisions_preserve_body_and_reopen_receipt_semantically() {
+  local home body_file show_file out
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skip-ish: tasks-axi absent, briefing revision not exercised"; return 0; }
+  home=$(make_home revision)
+  fm_write_meta "$home/state/fork-sync.meta" \
+    "window=fixture:fm-fork-sync" "project=$home/projects/firstmate" "kind=ship"
+  printf 'working: auditing\n' > "$home/state/fork-sync.status"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the board is waiting' --repo firstmate \
+    --choice 'Sync now, or rebase onto the current fork main.' \
+    --why-now 'The board is ready to rebase now.' \
+    --cost-of-waiting 'The board remains blocked.' \
+    --option 'Sync now.' \
+    --recommend 'Sync now.' >/dev/null || fail "could not register the decision"
+
+  body_file="$home/body-with-escapes"
+  {
+    printf 'Origin: fork-sync\nDecision key: fork-main-sync\nState: awaiting captain decision.\n\n'
+    printf 'Captain briefing v1:\nChoice: Sync now, or rebase onto the current fork main.\n'
+    printf 'Why now: The board is ready to rebase now.\nIf this waits: The board remains blocked.\n'
+    printf 'Option: Sync now.\nRecommended: Sync now.\n'
+    printf 'Operator note: C:\\fleet\tquoted "yes"\rcontrol='
+    printf '\001\000'
+    printf ':end\n'
+  } > "$body_file"
+  (cd "$home" && tasks-axi update fork-sync-decision-fork-main-sync --body-file "$body_file" >/dev/null) \
+    || fail "could not seed the escaped body"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the board is waiting' \
+    --choice 'Sync now, or rebase onto the current fork main.' \
+    --why-now 'The board is ready to rebase now.' \
+    --cost-of-waiting 'The board remains blocked.' \
+    --option 'Sync now.' \
+    --recommend 'Sync now.' >/dev/null || fail "the complete briefing rewrite failed"
+  show_file="$home/show-after-rewrite"
+  (cd "$home" && tasks-axi show fork-sync-decision-fork-main-sync --full) > "$show_file"
+  node -e '
+    const fs = require("fs");
+    const line = fs.readFileSync(process.argv[1], "utf8").split("\n").find((row) => row.startsWith("  body: "));
+    if (!line) process.exit(1);
+    const body = JSON.parse(line.slice(8));
+    if (!body.includes("Operator note: C:\\fleet\tquoted \"yes\"\rcontrol=\u0001\u0000:end")) process.exit(1);
+  ' "$show_file" || fail "the briefing rewrite corrupted a preserved escaped body line"
+
+  record_visible "$home"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the same wait in different words' \
+    >/dev/null || fail "the wording-only retry failed"
+  out=$(attention "$home" --status)
+  assert_contains "$out" 'decisions_new=false' "a wording-only edit reopened the captain receipt"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the same wait in different words' \
+    --choice 'Sync now, or rebase onto the current fork main.' \
+    --why-now 'The board is ready to rebase now.' \
+    --cost-of-waiting 'The board remains blocked.' \
+    --option 'Rebase onto the current fork main.' \
+    --recommend 'Rebase onto the current fork main.' >/dev/null || fail "the substantive briefing update failed"
+  out=$(attention "$home" --status)
+  assert_contains "$out" 'decisions_new=true' "a substantive briefing revision did not reopen the receipt"
+  pass "briefing revisions preserve escaped body data and reopen receipts only for substance"
 }
 
 # --- the primary-activity blind spot ----------------------------------------
@@ -613,8 +771,8 @@ test_unaccounted_primary_work_is_not_idle() {
   pass "unaccounted primary work reads as suspicious, not idle"
 }
 
-test_turn_end_stops_once_on_an_unsurfaced_decision() {
-  local home out status
+test_turn_end_requires_a_captain_visible_complete_alert() {
+  local home out status reply
   home=$(make_primary_home turnend)
   add_unsurfaced_decision "$home"
 
@@ -623,19 +781,17 @@ test_turn_end_stops_once_on_an_unsurfaced_decision() {
   assert_contains "$out" 'TURN WOULD END WITHOUT TELLING THE CAPTAIN' "the stop banner must read as an alarm"
   assert_contains "$out" 'bin/fm-attention.sh' "the stop must point at the captain-facing renderer"
 
-  # Bounded by construction: the same set costs exactly one forced continuation.
   out=$(run_turnend "$home"); status=$?
-  expect_code 0 "$status" "the same decision set must not stop a second turn"
-  [ -z "$out" ] || fail "the second turn end produced output: $out"
-
-  # A genuinely new decision is a new set and stops once more.
-  add_row "$home" Queued \
-    '- [ ] sample-decision-y - Approve the second thing (repo: sample) (kind: captain) (since 2026-07-28) (hold: another approval) (hold-kind: captain)'
-  run_turnend "$home" >/dev/null; status=$?
-  expect_code 2 "$status" "a genuinely new decision must stop the turn"
-  run_turnend "$home" >/dev/null; status=$?
-  expect_code 0 "$status" "the new set must also cost only one continuation"
-  pass "a turn cannot end on an unsurfaced captain decision, and each set costs one stop"
+  expect_code 2 "$status" "an internal render must not spend the receipt"
+  reply=$(attention "$home" --no-mark)
+  out=$(run_turnend "$home" "${reply/NEEDS YOUR DECISION/WAITING ON SOMETHING ELSE}"); status=$?
+  expect_code 2 "$status" "a display under the wrong category must not count"
+  out=$(run_turnend "$home" "${reply/Approve the worker installs/Approve something else}"); status=$?
+  expect_code 2 "$status" "a display under the wrong headline must not count"
+  out=$(run_turnend "$home" "$reply"); status=$?
+  expect_code 0 "$status" "the complete captain-visible alert must satisfy the gate"
+  [ -z "$out" ] || fail "the captain-visible turn end produced output: $out"
+  pass "a turn ends only after the complete alert is actually captain-visible"
 }
 
 test_claude_autoarm_allow_paths_still_stop_for_unsurfaced_decisions() {
@@ -738,24 +894,28 @@ test_empty_home_says_so_plainly() {
 
 test_hold_reason_keeps_its_full_text
 test_briefed_decision_renders_concretely
+test_new_decision_requires_a_complete_briefing
 test_a_captain_gated_work_item_is_a_decision_not_a_delay
 test_unbriefed_decision_is_honest_about_missing_language
 test_partial_briefing_renders_recorded_fields_and_names_missing_ones
 test_failed_backlog_projection_is_unknown_not_empty
 test_unknown_projection_surfaces_again_after_successful_derivation
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
+test_overdue_monitored_wait_is_due_now
 test_repeated_wait_escalates_to_a_decision
+test_same_key_decision_and_wait_render_once_as_combined
 test_identities_ignore_wording_so_repeats_do_not_re_alarm
 test_reopened_status_items_get_new_generation_identity
 test_brief_form_never_spends_captain_surface_marker
-test_guard_banner_uses_captain_safe_rendering_to_mark
+test_guard_banner_never_spends_captain_receipt
 test_only_the_captain_renderer_writes_the_surface_marker
 test_ordinary_reads_do_not_become_false_alarms
 test_ledger_keeps_showing_an_open_item_after_it_was_surfaced
 test_resolution_clears_the_item
 test_retry_never_erases_a_written_briefing
+test_briefing_revisions_preserve_body_and_reopen_receipt_semantically
 test_unaccounted_primary_work_is_not_idle
-test_turn_end_stops_once_on_an_unsurfaced_decision
+test_turn_end_requires_a_captain_visible_complete_alert
 test_claude_autoarm_allow_paths_still_stop_for_unsurfaced_decisions
 test_declared_waits_never_stop_a_turn
 test_captain_view_carries_no_internal_vocabulary
