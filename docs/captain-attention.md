@@ -12,7 +12,7 @@ Every open item is exactly one of two things.
 - A **wait** is a meaningful delay that needs no captain action yet, including a declared external delay or backlog work held on another blocker.
   It still owes the captain what is being awaited and when it is next checked.
 
-A wait becomes a decision only through an explicit `needs-decision` status transition.
+A wait becomes a decision only through an explicit action-required `needs-decision` or `blocked` status transition.
 Repetition never changes a routine external or timed wait into a critical alert.
 
 ## Where it comes from
@@ -61,7 +61,7 @@ Every rendering mode is read-only; only `--record-visible`, fed the assistant me
 Firstmate-facing projections such as the default view, `--brief`, `--json`, `--status`, and `--no-mark` cannot spend the receipt.
 Identities carry no prose, so a delay re-reported hourly with new wording stays one item and surfaces once; if that delay clears and later opens again, its generation changes and it surfaces again.
 Decision receipts include the explicit semantic revision, so a substantive revision reopens the receipt while a wording-only paraphrase does not.
-A keyed status decision and wait are folded into one combined decision alert.
+A direct or generated captain item and its matching keyed status decision or wait are folded into one combined decision alert.
 When that decision is transferred to its durable captain item, the current wait remains attached until a terminal work outcome closes the wait portion.
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 

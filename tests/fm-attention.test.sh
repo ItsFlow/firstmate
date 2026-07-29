@@ -342,6 +342,34 @@ test_failed_backlog_projection_is_unknown_not_empty() {
   pass "a failed backlog projection is unknown, not an empty captain call"
 }
 
+test_failed_status_collection_is_unknown_not_empty() {
+  local home fake_bin out status
+  home=$(make_home status-unknown)
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
+  printf 'paused: waiting for a readable source\n' > "$home/state/task-board.status"
+  fake_bin="$home/bin/failing-cat"
+  mkdir -p "$fake_bin"
+  printf '#!/usr/bin/env bash\nexit 42\n' > "$fake_bin/cat"
+  chmod +x "$fake_bin/cat"
+
+  PATH="$fake_bin:$PATH" bash -c '. "$1"; fm_attention_status_rows "$2"' \
+    _ "$ROOT/bin/fm-attention-lib.sh" "$home/state" >/dev/null 2>&1
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unreadable status stream was accepted as an empty collection"
+
+  out=$(FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" bash -c '
+    . "$1"
+    fm_attention_status_rows() { return 42; }
+    fm_attention_status "$2"
+    printf "available=%s unknown=%s json=%s\n" "$FM_ATT_AVAILABLE" "$FM_ATT_UNKNOWN" "$FM_ATT_JSON"
+  ' _ "$ROOT/bin/fm-attention-lib.sh" "$home")
+  assert_contains "$out" 'available=false' "a status collection failure left attention available"
+  assert_contains "$out" 'unknown=true' "a status collection failure did not report unknown"
+  assert_contains "$out" 'json={"unknown":true}' "a status collection failure rendered a false empty set"
+  pass "a status collection failure reports unknown instead of an empty captain call"
+}
+
 test_unknown_projection_surfaces_again_after_successful_derivation() {
   local home snapshot out status
   home=$(make_primary_home snapshot-unknown-reopens)
@@ -444,14 +472,14 @@ test_repeated_wait_stays_routine_until_captain_action_is_explicit() {
 
   printf 'blocked: firstmate must repair the failed synchronization\n' >> "$home/state/task-board.status"
   out=$(attention "$home" --no-mark --status)
-  assert_contains "$out" 'decisions=0' "a firstmate-actionable blocker must not become a captain decision"
-  assert_contains "$out" 'waits=1' "a firstmate-actionable blocker must remain a visible delay"
+  assert_contains "$out" 'decisions=1' "an action-required blocker must remain a critical decision"
+  assert_contains "$out" 'waits=0' "the same keyed wait must fold into the action-required blocker"
 
   printf 'needs-decision: choose whether to keep waiting or reroute the work\n' >> "$home/state/task-board.status"
   out=$(attention "$home" --no-mark --status)
   assert_contains "$out" 'decisions=1' "an explicit captain-action transition must create a decision"
   assert_contains "$out" 'waits=0' "the same keyed wait must fold into the explicit decision"
-  pass "a routine delay becomes critical only through an explicit captain-action transition"
+  pass "routine delays stay routine until an explicit action-required transition"
 }
 
 test_same_key_decision_and_wait_render_once_as_combined() {
@@ -488,8 +516,38 @@ test_same_key_decision_and_wait_render_once_as_combined() {
   pass "one keyed issue combines once and terminal work closes only its wait portion"
 }
 
+test_direct_captain_hold_and_same_task_status_render_once() {
+  local home json
+  home=$(make_home direct-hold-dedup)
+  add_row "$home" 'In flight' \
+    '- [ ] task-board - Choose the task board release path (repo: sample) (kind: ship) (hold: the release path needs captain input) (hold-kind: captain)
+  Captain briefing v1:
+  Semantic revision: task-board-release-v1
+  Choice: Release the board now, or keep it parked.
+  Why now: The board is otherwise ready to ship.
+  If this waits: The board release remains parked.
+  Option: Release the board now.
+  Option: Keep the board parked.
+  Recommended: Release the board now.'
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
+  {
+    printf 'needs-decision [key=release]: choose whether to release the board\n'
+    printf 'paused [key=release]: waiting for final release confirmation\n'
+  } > "$home/state/task-board.status"
+  touch "$home/state/.last-watcher-beat"
+
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq 'length')" -eq 1 ] \
+    || fail "a direct captain hold duplicated its same-task status alert: $json"
+  [ "$(printf '%s' "$json" | jq -r '.[0] | "\(.identity)|\(.combined_wait)|\(.awaiting)"')" \
+    = 'decision:task-board|true|waiting for final release confirmation' ] \
+    || fail "the direct captain hold did not retain its same-task status wait: $json"
+  pass "a direct captain hold and its same-task status render once"
+}
+
 test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work() {
-  local home out json status
+  local home out json status first_wait second_wait
   command -v tasks-axi >/dev/null 2>&1 || { pass "skip-ish: tasks-axi absent, combined transfer not exercised"; return 0; }
   home=$(make_home combined-transfer)
   add_row "$home" 'In flight' \
@@ -526,12 +584,27 @@ test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work(
   status=$?
   expect_code 0 "$status" "a complete combined alert must earn a captain-visible receipt"
 
+  first_wait=$(printf '%s' "$json" | jq -r '.[0].combined_wait_identity')
+  {
+    printf 'working [key=release]: legal review resumed\n'
+    printf 'paused [key=release]: waiting for renewed legal confirmation\n'
+  } >> "$home/state/task-board.status"
+  json=$(attention "$home" --json)
+  second_wait=$(printf '%s' "$json" | jq -r '.[0].combined_wait_identity')
+  [ "$first_wait" != "$second_wait" ] \
+    || fail "a reopened combined wait reused its previous receipt identity: $first_wait"
+  assert_contains "$second_wait" 'wait:task-board:release:2' \
+    "a reopened combined wait must carry a new generation"
+  assert_contains "$(attention "$home" --status)" 'new=true' \
+    "a reopened combined wait must surface after the earlier generation was receipted"
+  record_visible "$home"
+
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" complete task-board release >/dev/null \
     || fail "could not transfer the combined decision"
   json=$(attention "$home" --json)
   [ "$(printf '%s' "$json" | jq -r '.[0] | "\(.briefing_complete)|\(.combined_wait)|\(.awaiting)"')" \
-    = 'true|true|waiting for the final legal answer' ] \
+    = 'true|true|waiting for renewed legal confirmation' ] \
     || fail "the captain-held transfer lost the combined wait: $json"
 
   printf 'done [key=release]: the reviewed work finished\n' >> "$home/state/task-board.status"
@@ -539,7 +612,7 @@ test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work(
   [ "$(printf '%s' "$json" | jq -r '.[0] | [.briefing_complete, (.combined_wait // false), (.awaiting // "")] | join("|")')" \
     = 'true|false|' ] \
     || fail "terminal work left stale combined-wait text: $json"
-  assert_not_contains "$(attention "$home")" 'waiting for the final legal answer' \
+  assert_not_contains "$(attention "$home")" 'waiting for renewed legal confirmation' \
     "terminal work must remove the stale combined wait from the captain view"
   pass "a combined alert remains receiptable through transfer and terminal work clears its wait"
 }
@@ -1050,11 +1123,13 @@ test_a_captain_gated_work_item_is_a_decision_not_a_delay
 test_unbriefed_decision_is_honest_about_missing_language
 test_partial_briefing_renders_recorded_fields_and_names_missing_ones
 test_failed_backlog_projection_is_unknown_not_empty
+test_failed_status_collection_is_unknown_not_empty
 test_unknown_projection_surfaces_again_after_successful_derivation
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_overdue_monitored_wait_is_due_now
 test_repeated_wait_stays_routine_until_captain_action_is_explicit
 test_same_key_decision_and_wait_render_once_as_combined
+test_direct_captain_hold_and_same_task_status_render_once
 test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work
 test_identities_ignore_wording_so_repeats_do_not_re_alarm
 test_reopened_status_items_get_new_generation_identity

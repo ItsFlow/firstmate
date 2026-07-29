@@ -201,6 +201,14 @@ $set
 EOF
   printf '%s' "$out"
 }
+
+status_verb_opens_decision() {  # <status-verb>
+  case "$1" in
+    needs-decision|blocked) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Fold the WHOLE status stream into the set of decisions still open. Prints one
 # TAB-separated "<key>\t<verb>\t<summary>" line per still-open decision, in
 # most-recently-opened-last order; prints nothing when none are open. Pure read of
@@ -217,13 +225,14 @@ status_open_decisions() {  # <status-file>
     [ -n "$stripped" ] || continue
     verb=$(status_line_verb "$line")
     key=$(_fm_decision_key "$line") || continue
+    if status_verb_opens_decision "$verb"; then
+      note=$(status_line_note "$line")
+      open=$(_fm_decision_drop "$open" "$key")
+      [ -n "$open" ] && open="${open}"$'\n'
+      open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
+      continue
+    fi
     case "$verb" in
-      needs-decision|blocked)
-        note=$(status_line_note "$line")
-        open=$(_fm_decision_drop "$open" "$key")
-        [ -n "$open" ] && open="${open}"$'\n'
-        open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
-        ;;
       "$resolve"|"$held")
         open=$(_fm_decision_drop "$open" "$key")
         [ -n "$open" ] && open="${open}"$'\n'

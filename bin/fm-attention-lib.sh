@@ -30,8 +30,8 @@
 #              declared external delay or backlog work held on another blocker.
 #              The captain is still owed what is being awaited and when it is
 #              next checked.
-# Only an explicit `needs-decision` status transition can turn a wait into a
-# captain decision. Repetition and firstmate-actionable blockers never change
+# Only an explicit action-required `needs-decision` or `blocked` status
+# transition can turn a wait into a captain decision. Repetition never changes
 # who must act.
 #
 # IDENTITY AND DEDUPLICATION
@@ -214,14 +214,14 @@ _fm_attention_generation_set() {  # <generation-set> <key> <generation>
 }
 
 # Emit one TAB-separated status-derived row per open decision or wait:
-#   <class> <task-id> <key> <generation> <verb> <redeclares> <next-check-secs> <note>
+#   <class> <task-id> <key> <generation> <verb> <redeclares> <wait-generation> <next-check-secs> <note>
 # Only tasks with live metadata are considered: an id whose metadata is gone was
 # torn down, and any decision it still owed was transferred to a durable backlog
 # hold by bin/fm-decision-hold.sh. Terminal tasks are skipped for the same reason
 # origin_open_decisions skips them.
 fm_attention_status_rows() {  # <state-dir>
   local state=$1 meta id status kind last verb key note n next line stripped pause resolve held
-  local decisions waits decision_gens wait_gens existing gen dverb dnote dn dwait wverb wgen wn wnote decision_next
+  local decisions waits decision_gens wait_gens existing gen dverb dnote dn dwgen dwait wverb wgen wn wnote decision_next status_text
   pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
@@ -241,6 +241,7 @@ fm_attention_status_rows() {  # <state-dir>
     waits=''
     decision_gens=''
     wait_gens=''
+    status_text=$(cat "$status" 2>/dev/null) || return 1
     while IFS= read -r line || [ -n "$line" ]; do
       stripped=${line//[[:space:]]/}
       [ -n "$stripped" ] || continue
@@ -248,34 +249,37 @@ fm_attention_status_rows() {  # <state-dir>
       key=$(_fm_decision_key "$line") || continue
       note=$(status_line_note "$line")
       note=${note//$'\t'/ }
+      if status_verb_opens_decision "$verb"; then
+        existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
+        if [ -n "$existing" ]; then
+          IFS=$'\t' read -r _ dverb gen dnote dn dwgen dwait <<EOF
+$existing
+EOF
+        else
+          gen=$(_fm_attention_generation_get "$decision_gens" "$key")
+          gen=$((gen + 1))
+          decision_gens=$(_fm_attention_generation_set "$decision_gens" "$key" "$gen")
+          dn=0
+          dwgen=0
+          dwait=''
+        fi
+        existing=$(_fm_attention_row_for_key "$waits" "$key" || true)
+        if [ -n "$existing" ]; then
+          IFS=$'\t' read -r _ wverb wgen wn wnote <<EOF
+$existing
+EOF
+          dn=$wn
+          dwgen=$wgen
+          dwait=$wnote
+        fi
+        decisions=$(_fm_attention_drop_key "$decisions" "$key")
+        [ -n "$decisions" ] && decisions="${decisions}"$'\n'
+        decisions="${decisions}${key}"$'\t'"${verb}"$'\t'"${gen}"$'\t'"${note}"$'\t'"${dn}"$'\t'"${dwgen}"$'\t'"${dwait}"$'\n'
+        waits=$(_fm_attention_drop_key "$waits" "$key")
+        [ -n "$waits" ] && waits="${waits}"$'\n'
+        continue
+      fi
       case "$verb" in
-        needs-decision)
-          existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
-          if [ -n "$existing" ]; then
-            IFS=$'\t' read -r _ dverb gen dnote dn dwait <<EOF
-$existing
-EOF
-          else
-            gen=$(_fm_attention_generation_get "$decision_gens" "$key")
-            gen=$((gen + 1))
-            decision_gens=$(_fm_attention_generation_set "$decision_gens" "$key" "$gen")
-            dn=0
-            dwait=''
-          fi
-          existing=$(_fm_attention_row_for_key "$waits" "$key" || true)
-          if [ -n "$existing" ]; then
-            IFS=$'\t' read -r _ wverb wgen wn wnote <<EOF
-$existing
-EOF
-            dn=$wn
-            dwait=$wnote
-          fi
-          decisions=$(_fm_attention_drop_key "$decisions" "$key")
-          [ -n "$decisions" ] && decisions="${decisions}"$'\n'
-          decisions="${decisions}${key}"$'\t'"${verb}"$'\t'"${gen}"$'\t'"${note}"$'\t'"${dn}"$'\t'"${dwait}"$'\n'
-          waits=$(_fm_attention_drop_key "$waits" "$key")
-          [ -n "$waits" ] && waits="${waits}"$'\n'
-          ;;
         "$resolve")
           decisions=$(_fm_attention_drop_key "$decisions" "$key")
           [ -n "$decisions" ] && decisions="${decisions}"$'\n'
@@ -287,14 +291,11 @@ EOF
           waits=$(_fm_attention_drop_key "$waits" "$key")
           [ -n "$waits" ] && waits="${waits}"$'\n'
           if [ -n "$existing" ]; then
-            IFS=$'\t' read -r _ dverb gen dnote dn dwait <<EOF
+            IFS=$'\t' read -r _ dverb gen dnote dn dwgen dwait <<EOF
 $existing
 EOF
             if [ "$dn" -gt 0 ] && [ -n "$dwait" ]; then
-              gen=$(_fm_attention_generation_get "$wait_gens" "$key")
-              gen=$((gen + 1))
-              wait_gens=$(_fm_attention_generation_set "$wait_gens" "$key" "$gen")
-              waits="${waits}${key}"$'\t'"${pause}"$'\t'"${gen}"$'\t'"${dn}"$'\t'"${dwait}"$'\n'
+              waits="${waits}${key}"$'\t'"${pause}"$'\t'"${dwgen}"$'\t'"${dn}"$'\t'"${dwait}"$'\n'
             fi
           fi
           decisions=$(_fm_attention_drop_key "$decisions" "$key")
@@ -305,24 +306,29 @@ EOF
           [ -n "$waits" ] && waits="${waits}"$'\n'
           existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
           if [ -n "$existing" ]; then
-            IFS=$'\t' read -r _ dverb gen dnote dn dwait <<EOF
+            IFS=$'\t' read -r _ dverb gen dnote dn dwgen dwait <<EOF
 $existing
 EOF
             decisions=$(_fm_attention_drop_key "$decisions" "$key")
             [ -n "$decisions" ] && decisions="${decisions}"$'\n'
-            decisions="${decisions}${key}"$'\t'"${dverb}"$'\t'"${gen}"$'\t'"${dnote}"$'\t0\t\n'
+            decisions="${decisions}${key}"$'\t'"${dverb}"$'\t'"${gen}"$'\t'"${dnote}"$'\t0\t0\t\n'
           fi
           ;;
-        blocked|"$pause")
+        "$pause")
           existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
           if [ -n "$existing" ]; then
-            IFS=$'\t' read -r _ dverb gen dnote n dwait <<EOF
+            IFS=$'\t' read -r _ dverb gen dnote n dwgen dwait <<EOF
 $existing
 EOF
+            if [ "$n" -eq 0 ]; then
+              dwgen=$(_fm_attention_generation_get "$wait_gens" "$key")
+              dwgen=$((dwgen + 1))
+              wait_gens=$(_fm_attention_generation_set "$wait_gens" "$key" "$dwgen")
+            fi
             n=$((n + 1))
             decisions=$(_fm_attention_drop_key "$decisions" "$key")
             [ -n "$decisions" ] && decisions="${decisions}"$'\n'
-            decisions="${decisions}${key}"$'\t'"${dverb}"$'\t'"${gen}"$'\t'"${dnote}"$'\t'"${n}"$'\t'"${note}"$'\n'
+            decisions="${decisions}${key}"$'\t'"${dverb}"$'\t'"${gen}"$'\t'"${dnote}"$'\t'"${n}"$'\t'"${dwgen}"$'\t'"${note}"$'\n'
             waits=$(_fm_attention_drop_key "$waits" "$key")
             [ -n "$waits" ] && waits="${waits}"$'\n'
             continue
@@ -344,21 +350,23 @@ EOF
           waits="${waits}${key}"$'\t'"${verb}"$'\t'"${gen}"$'\t'"${n}"$'\t'"${note}"$'\n'
           ;;
       esac
-    done < "$status"
+    done <<EOF
+$status_text
+EOF
     next=$(fm_attention_wait_next_check "$status" "$state")
-    while IFS=$'\t' read -r key verb gen note n wnote; do
+    while IFS=$'\t' read -r key verb gen note n dwgen wnote; do
       [ -n "$key" ] || continue
       decision_next=$next
       [ "$n" -gt 0 ] || decision_next=-1
-      printf 'decision\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$id" "$key" "$gen" "$verb" "$n" "$decision_next" "$note" "$wnote"
+      printf 'decision\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" "$key" "$gen" "$verb" "$n" "$dwgen" "$decision_next" "$note" "$wnote"
     done <<EOF
 $decisions
 EOF
     while IFS=$'\t' read -r key verb gen n note; do
       [ -n "$key" ] || continue
-      printf 'wait\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$id" "$key" "$gen" "$verb" "$n" "$next" "$note" "$note"
+      printf 'wait\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" "$key" "$gen" "$verb" "$n" "$gen" "$next" "$note" "$note"
     done <<EOF
 $waits
 EOF
@@ -380,7 +388,7 @@ fm_attention_json() {  # <fm-home>
     "$FM_ATTENTION_SNAPSHOT_BIN" --backlog-json 2>/dev/null) || return 1
   [ -n "$backlog_json" ] || return 1
   printf '%s' "$backlog_json" | jq -e 'type == "object" and (.records | type == "array")' >/dev/null 2>&1 || return 1
-  rows=$(fm_attention_status_rows "$state")
+  rows=$(fm_attention_status_rows "$state") || return 1
   printf '%s' "$rows" | jq -Rn \
     --argjson backlog "$backlog_json" \
     --arg brief_header "$FM_ATTENTION_BRIEF_HEADER" \
@@ -455,6 +463,7 @@ fm_attention_json() {  # <fm-home>
            redeclares:0,
            escalated:false,
            combined_wait:false,
+           combined_wait_identity:null,
            next_check_seconds:null}
           + briefing(.) ];
     def backlog_waits:
@@ -476,6 +485,7 @@ fm_attention_json() {  # <fm-home>
            redeclares:0,
            escalated:false,
            combined_wait:false,
+           combined_wait_identity:null,
            next_check_seconds:null,
            briefed:false,briefing_complete:false,semantic_revision:null,choice:null,why_now:null,cost_of_waiting:null,
            options:[],recommendation:null,briefing_missing:[]} ];
@@ -483,12 +493,13 @@ fm_attention_json() {  # <fm-home>
       [ inputs
         | select(length > 0)
         | split("\t")
-        | select(length >= 9)
+        | select(length >= 10)
         | {class:.[0],id:.[1],key:.[2],generation:.[3],verb:.[4],
            redeclares:(.[5] | tonumber? // 0),
-           next_check_seconds:(.[6] | tonumber? // -1),
-           note:.[7],
-           awaiting:(.[8:] | join("\t"))} ];
+           wait_generation:.[6],
+           next_check_seconds:(.[7] | tonumber? // -1),
+           note:.[8],
+           awaiting:(.[9:] | join("\t"))} ];
     # The title of the work item itself, so a captain-facing line names the piece
     # of work rather than repeating the event note as its own heading. Falls back
     # to the note when the backlog has no matching row, and never to the raw id,
@@ -512,31 +523,48 @@ fm_attention_json() {  # <fm-home>
            redeclares:.redeclares,
            escalated:false,
            combined_wait:(.class == "decision" and .awaiting != ""),
+           combined_wait_identity:
+             (if .class == "decision" and .awaiting != ""
+              then ("wait:" + .id + ":" + .key + ":" + .wait_generation)
+              elif .class == "wait"
+              then (.class + ":" + .id + ":" + .key + ":" + .generation)
+              else null
+              end),
            next_check_seconds:(if .class == "wait" or .awaiting != "" then .next_check_seconds else null end),
            briefed:false,briefing_complete:false,semantic_revision:null,choice:null,why_now:null,cost_of_waiting:null,
            options:[],recommendation:null,briefing_missing:[]} ];
     (backlog_decisions) as $backlog_decisions
     | (status_records) as $status_records
-    | [ $backlog_decisions[] as $decision
-        | ([ $status_records[]
-             | select((.id + "-decision-" + .key) == $decision.id) ] | .[0]) as $live
-        | if $live == null then
-            $decision
-          elif (($live.combined_wait == true or $live.class == "wait") and $live.awaiting != null) then
-            $decision + {
-              combined_wait:true,
-              awaiting:$live.awaiting,
-              redeclares:$live.redeclares,
-              next_check_seconds:$live.next_check_seconds
-            }
-          else
-            $decision
-          end
-      ] as $merged_decisions
+    | def synthetic_match($decision; $status):
+        ($status.id + "-decision-" + $status.key) == $decision.id;
+      def has_synthetic_owner($status):
+        $backlog_decisions | any(synthetic_match(.; $status));
+      def matches_decision($decision; $status):
+        synthetic_match($decision; $status)
+        or ($decision.id == $status.id and (has_synthetic_owner($status) | not));
+      [ $backlog_decisions[] as $decision
+        | ([ $status_records[] | select(matches_decision($decision; .)) ] | .[0]) as $live
+        | {status_identity:($live.identity // null),
+           record:
+             (if $live == null then
+                $decision
+              elif (($live.combined_wait == true or $live.class == "wait") and $live.awaiting != null) then
+                $decision + {
+                  combined_wait:true,
+                  combined_wait_identity:$live.combined_wait_identity,
+                  awaiting:$live.awaiting,
+                  redeclares:$live.redeclares,
+                  next_check_seconds:$live.next_check_seconds
+                }
+              else
+                $decision
+              end)}
+      ] as $decision_associations
+    | [ $decision_associations[].record ] as $merged_decisions
     | [ $status_records[]
         | . as $status
-        | select(($backlog_decisions
-                  | any(.id == ($status.id + "-decision-" + $status.key)))
+        | select(($decision_associations
+                  | any(.status_identity == $status.identity))
                  | not)
       ] as $unmatched_status
     | ($merged_decisions + $unmatched_status) as $primary
@@ -717,7 +745,7 @@ fm_attention_status() {  # <fm-home>
       | @json;
     def attention_receipt_identity:
       if .class == "decision" then
-        {decision:decision_receipt_identity,combined_wait:(.combined_wait == true)}
+        {decision:decision_receipt_identity,combined_wait_identity:(.combined_wait_identity // null)}
         | @json
       else
         .identity

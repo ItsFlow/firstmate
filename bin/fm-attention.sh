@@ -9,8 +9,8 @@
 #   a decision - your answer is needed before the work can move;
 #   a wait     - a meaningful delay that needs no captain action yet, shown with
 #                what is being awaited and when it is next checked.
-# Only an explicit `needs-decision` status transition changes a wait into a
-# captain decision.
+# Only an explicit action-required `needs-decision` or `blocked` status
+# transition changes a wait into a captain decision.
 #
 # A turn-end adapter may pass the actual assistant reply to --record-visible.
 # That mode validates the captain category, headline, and complete explanation
