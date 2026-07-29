@@ -69,9 +69,10 @@
 # endpoint, or a harness.
 #
 # DEPENDENCIES
-# jq and a successful backlog projection are required to know the complete set.
-# When that derivation fails this library reports FM_ATT_AVAILABLE=false and
-# FM_ATT_UNKNOWN=true; callers must not treat it as an empty set.
+# jq, a successful backlog projection, and readable existing state inputs are
+# required to know the complete set. When that derivation fails this library
+# reports FM_ATT_AVAILABLE=false and FM_ATT_UNKNOWN=true; callers must not treat
+# it as an empty set.
 
 _FM_ATTENTION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_ATTENTION_LIB_DIR="."
 
@@ -220,18 +221,35 @@ _fm_attention_generation_set() {  # <generation-set> <key> <generation>
 # hold by bin/fm-decision-hold.sh. Terminal tasks are skipped for the same reason
 # origin_open_decisions skips them.
 fm_attention_status_rows() {  # <state-dir>
-  local state=$1 meta id status kind last verb key note n next line stripped pause resolve held
+  local state=$1 meta_paths meta meta_text meta_line id status kind kind_seen last verb key note n next line stripped pause resolve held
   local decisions waits decision_gens wait_gens existing gen dverb dnote dn dwgen dwait wverb wgen wn wnote decision_next status_text
   pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  for meta in "$state"/*.meta; do
-    [ -f "$meta" ] || continue
+  [ -e "$state" ] || return 0
+  [ -d "$state" ] && [ -r "$state" ] && [ -x "$state" ] || return 1
+  meta_paths=$(find "$state" -type d ! -path "$state" -prune -o -name '*.meta' -print 2>/dev/null) || return 1
+  while IFS= read -r meta; do
+    [ -n "$meta" ] || continue
+    [ -f "$meta" ] || return 1
+    meta_text=$(cat "$meta" 2>/dev/null) || return 1
     id=$(basename "$meta" .meta)
     status="$state/$id.status"
     [ -f "$status" ] || continue
-    kind=$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-    [ -n "$kind" ] || kind=ship
+    kind=''
+    kind_seen=0
+    while IFS= read -r meta_line || [ -n "$meta_line" ]; do
+      case "$meta_line" in
+        kind=*) kind=${meta_line#kind=}; kind_seen=1 ;;
+      esac
+    done <<EOF
+$meta_text
+EOF
+    if [ "$kind_seen" -eq 0 ]; then
+      kind=ship
+    else
+      [ -n "$kind" ] || return 1
+    fi
     if [ "$kind" != secondmate ]; then
       last=$(last_status_line "$status")
       verb=$(status_line_verb "$last")
@@ -370,7 +388,9 @@ EOF
     done <<EOF
 $waits
 EOF
-  done
+  done <<EOF
+$meta_paths
+EOF
   return 0
 }
 
@@ -541,7 +561,9 @@ fm_attention_json() {  # <fm-home>
         $backlog_decisions | any(synthetic_match(.; $status));
       def matches_decision($decision; $status):
         synthetic_match($decision; $status)
-        or ($decision.id == $status.id and (has_synthetic_owner($status) | not));
+        or ($decision.id == $status.id
+            and $decision.key == $status.key
+            and (has_synthetic_owner($status) | not));
       [ $backlog_decisions[] as $decision
         | ([ $status_records[] | select(matches_decision($decision; .)) ] | .[0]) as $live
         | {status_identity:($live.identity // null),

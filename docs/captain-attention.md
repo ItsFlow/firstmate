@@ -21,7 +21,7 @@ Repetition never changes a routine external or timed wait into a critical alert.
 It derives the open set from state firstmate already keeps durably - `data/backlog.md` and `state/*.status` - and stores no item records of its own.
 It is therefore not a second status surface, and it is harness-agnostic and runtime-backend-agnostic: it never inspects a pane, an endpoint, or a harness.
 Backlog rows are read through `bin/fm-fleet-snapshot.sh --backlog-json`, which remains the one owner of backlog parsing.
-If that projection cannot be read, the result is unknown, not empty: renderers say that the open decision and wait list could not be determined, never print an all-clear, and never record a captain receipt.
+If that projection or an existing state directory, metadata record, or status stream cannot be read, the result is unknown, not empty: renderers say that the open decision and wait list could not be determined, never print an all-clear, and never record a captain receipt.
 
 A backlog row is a decision when it carries a captain hold with a reason and no unresolved blocker, whatever the item's own `kind` says.
 The documented way to gate ordinary work on the captain is `tasks-axi hold <id> --reason "<reason>" --kind captain`, which leaves `kind` as `ship`, so the snapshot's narrower `captain_actionable` flag is false for exactly the threads this contract exists for.
@@ -61,7 +61,7 @@ Every rendering mode is read-only; only `--record-visible`, fed the assistant me
 Firstmate-facing projections such as the default view, `--brief`, `--json`, `--status`, and `--no-mark` cannot spend the receipt.
 Identities carry no prose, so a delay re-reported hourly with new wording stays one item and surfaces once; if that delay clears and later opens again, its generation changes and it surfaces again.
 Decision receipts include the explicit semantic revision, so a substantive revision reopens the receipt while a wording-only paraphrase does not.
-A direct or generated captain item and its matching keyed status decision or wait are folded into one combined decision alert.
+A generated captain item merges with its origin and key, while a direct item merges only with a same-task status whose explicit key equals the item id; ambiguous records remain separate.
 When that decision is transferred to its durable captain item, the current wait remains attached until a terminal work outcome closes the wait portion.
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 

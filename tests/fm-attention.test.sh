@@ -342,15 +342,15 @@ test_failed_backlog_projection_is_unknown_not_empty() {
   pass "a failed backlog projection is unknown, not an empty captain call"
 }
 
-test_failed_status_collection_is_unknown_not_empty() {
-  local home fake_bin out status
+test_failed_state_collection_is_unknown_not_empty() {
+  local home fake_bin metadata_bin enumeration_bin out status
   home=$(make_home status-unknown)
   fm_write_meta "$home/state/task-board.meta" \
     "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
   printf 'paused: waiting for a readable source\n' > "$home/state/task-board.status"
   fake_bin="$home/bin/failing-cat"
   mkdir -p "$fake_bin"
-  printf '#!/usr/bin/env bash\nexit 42\n' > "$fake_bin/cat"
+  printf '#!/usr/bin/env bash\ncase "$1" in *.status) exit 42 ;; esac\nexec /bin/cat "$@"\n' > "$fake_bin/cat"
   chmod +x "$fake_bin/cat"
 
   PATH="$fake_bin:$PATH" bash -c '. "$1"; fm_attention_status_rows "$2"' \
@@ -358,16 +358,45 @@ test_failed_status_collection_is_unknown_not_empty() {
   status=$?
   [ "$status" -ne 0 ] || fail "an unreadable status stream was accepted as an empty collection"
 
+  metadata_bin="$home/bin/failing-metadata-cat"
+  mkdir -p "$metadata_bin"
+  printf '#!/usr/bin/env bash\ncase "$1" in *.meta) exit 42 ;; esac\nexec /bin/cat "$@"\n' > "$metadata_bin/cat"
+  chmod +x "$metadata_bin/cat"
+  PATH="$metadata_bin:$PATH" bash -c '. "$1"; fm_attention_status_rows "$2"' \
+    _ "$ROOT/bin/fm-attention-lib.sh" "$home/state" >/dev/null 2>&1
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unreadable metadata record was accepted with the default task kind"
+
+  enumeration_bin="$home/bin/failing-state-enumeration"
+  mkdir -p "$enumeration_bin"
+  printf '#!/usr/bin/env bash\nexit 42\n' > "$enumeration_bin/find"
+  chmod +x "$enumeration_bin/find"
+  PATH="$enumeration_bin:$PATH" bash -c '. "$1"; fm_attention_status_rows "$2"' \
+    _ "$ROOT/bin/fm-attention-lib.sh" "$home/state" >/dev/null 2>&1
+  status=$?
+  [ "$status" -ne 0 ] || fail "a failed state enumeration was accepted as an empty collection"
+
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample"
+  bash -c '. "$1"; fm_attention_status_rows "$2"' \
+    _ "$ROOT/bin/fm-attention-lib.sh" "$home/state" >/dev/null 2>&1 \
+    || fail "readable metadata without a task kind did not use the default"
+  printf 'kind=\n' >> "$home/state/task-board.meta"
+  bash -c '. "$1"; fm_attention_status_rows "$2"' \
+    _ "$ROOT/bin/fm-attention-lib.sh" "$home/state" >/dev/null 2>&1
+  status=$?
+  [ "$status" -ne 0 ] || fail "an explicitly empty task kind was accepted as an omitted kind"
+
   out=$(FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" bash -c '
     . "$1"
     fm_attention_status_rows() { return 42; }
     fm_attention_status "$2"
     printf "available=%s unknown=%s json=%s\n" "$FM_ATT_AVAILABLE" "$FM_ATT_UNKNOWN" "$FM_ATT_JSON"
   ' _ "$ROOT/bin/fm-attention-lib.sh" "$home")
-  assert_contains "$out" 'available=false' "a status collection failure left attention available"
-  assert_contains "$out" 'unknown=true' "a status collection failure did not report unknown"
-  assert_contains "$out" 'json={"unknown":true}' "a status collection failure rendered a false empty set"
-  pass "a status collection failure reports unknown instead of an empty captain call"
+  assert_contains "$out" 'available=false' "a state collection failure left attention available"
+  assert_contains "$out" 'unknown=true' "a state collection failure did not report unknown"
+  assert_contains "$out" 'json={"unknown":true}' "a state collection failure rendered a false empty set"
+  pass "state, metadata, and status collection failures report unknown"
 }
 
 test_unknown_projection_surfaces_again_after_successful_derivation() {
@@ -532,8 +561,8 @@ test_direct_captain_hold_and_same_task_status_render_once() {
   fm_write_meta "$home/state/task-board.meta" \
     "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
   {
-    printf 'needs-decision [key=release]: choose whether to release the board\n'
-    printf 'paused [key=release]: waiting for final release confirmation\n'
+    printf 'needs-decision [key=task-board]: choose whether to release the board\n'
+    printf 'paused [key=task-board]: waiting for final release confirmation\n'
   } > "$home/state/task-board.status"
   touch "$home/state/.last-watcher-beat"
 
@@ -544,6 +573,35 @@ test_direct_captain_hold_and_same_task_status_render_once() {
     = 'decision:task-board|true|waiting for final release confirmation' ] \
     || fail "the direct captain hold did not retain its same-task status wait: $json"
   pass "a direct captain hold and its same-task status render once"
+}
+
+test_ambiguous_direct_hold_keeps_every_keyed_decision_visible() {
+  local home json identities
+  home=$(make_home direct-hold-ambiguous)
+  add_row "$home" 'In flight' \
+    '- [ ] task-board - Choose the task board direction (repo: sample) (kind: ship) (hold: the board needs captain input) (hold-kind: captain)
+  Captain briefing v1:
+  Semantic revision: task-board-direction-v1
+  Choice: Choose the board direction.
+  Why now: The board is ready for direction.
+  If this waits: The board remains parked.
+  Option: Choose a direction now.
+  Recommended: Choose a direction now.'
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
+  {
+    printf 'needs-decision [key=route]: choose the board route\n'
+    printf 'needs-decision [key=access]: choose the board access policy\n'
+  } > "$home/state/task-board.status"
+
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq 'length')" -eq 3 ] \
+    || fail "an ambiguous direct hold consumed a distinct keyed decision: $json"
+  identities=$(printf '%s' "$json" | jq -r '.[].identity')
+  assert_contains "$identities" 'decision:task-board' "the direct captain item disappeared"
+  assert_contains "$identities" 'decision:task-board:route:1' "the route decision disappeared"
+  assert_contains "$identities" 'decision:task-board:access:1' "the access decision disappeared"
+  pass "an ambiguous direct hold leaves every keyed decision visible"
 }
 
 test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work() {
@@ -1123,13 +1181,14 @@ test_a_captain_gated_work_item_is_a_decision_not_a_delay
 test_unbriefed_decision_is_honest_about_missing_language
 test_partial_briefing_renders_recorded_fields_and_names_missing_ones
 test_failed_backlog_projection_is_unknown_not_empty
-test_failed_status_collection_is_unknown_not_empty
+test_failed_state_collection_is_unknown_not_empty
 test_unknown_projection_surfaces_again_after_successful_derivation
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_overdue_monitored_wait_is_due_now
 test_repeated_wait_stays_routine_until_captain_action_is_explicit
 test_same_key_decision_and_wait_render_once_as_combined
 test_direct_captain_hold_and_same_task_status_render_once
+test_ambiguous_direct_hold_keeps_every_keyed_decision_visible
 test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work
 test_identities_ignore_wording_so_repeats_do_not_re_alarm
 test_reopened_status_items_get_new_generation_identity
