@@ -226,16 +226,23 @@ fm_attention_status_rows() {  # <state-dir>
   pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  [ -e "$state" ] || return 0
+  if [ ! -e "$state" ]; then
+    [ -L "$state" ] && return 1
+    return 0
+  fi
   [ -d "$state" ] && [ -r "$state" ] && [ -x "$state" ] || return 1
-  meta_paths=$(find "$state" -type d ! -path "$state" -prune -o -name '*.meta' -print 2>/dev/null) || return 1
+  meta_paths=$(find -H "$state" -type d ! -path "$state" -prune -o -name '*.meta' -print 2>/dev/null) || return 1
   while IFS= read -r meta; do
     [ -n "$meta" ] || continue
     [ -f "$meta" ] || return 1
     meta_text=$(cat "$meta" 2>/dev/null) || return 1
     id=$(basename "$meta" .meta)
     status="$state/$id.status"
-    [ -f "$status" ] || continue
+    if [ ! -e "$status" ]; then
+      [ -L "$status" ] && return 1
+      continue
+    fi
+    [ -f "$status" ] || return 1
     kind=''
     kind_seen=0
     while IFS= read -r meta_line || [ -n "$meta_line" ]; do

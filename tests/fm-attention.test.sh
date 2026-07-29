@@ -399,6 +399,42 @@ test_failed_state_collection_is_unknown_not_empty() {
   pass "state, metadata, and status collection failures report unknown"
 }
 
+test_linked_state_inputs_follow_targets_and_dangling_links_are_unknown() {
+  local home json out status
+  home=$(make_home linked-state)
+  mv "$home/state" "$home/state-target"
+  ln -s state-target "$home/state"
+  fm_write_meta "$home/state-target/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
+  printf 'needs-decision [key=route]: choose the deployment route\n' \
+    > "$home/state-target/task-board.status-source"
+  ln -s task-board.status-source "$home/state-target/task-board.status"
+
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq 'length')" -eq 1 ] \
+    || fail "a readable linked state directory did not expose its decision"
+  printf '%s' "$json" | jq -e '.[0].identity == "decision:task-board:route:1"' >/dev/null \
+    || fail "a readable linked status stream did not expose its decision"
+
+  home=$(make_home dangling-state)
+  rmdir "$home/state"
+  ln -s missing-state "$home/state"
+  out=$(attention "$home" --status 2>&1)
+  status=$?
+  expect_code 3 "$status" "a dangling state directory must report unknown"
+  assert_contains "$out" 'attention=unknown' "a dangling state directory rendered a false empty set"
+
+  home=$(make_home dangling-status)
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
+  ln -s missing-status "$home/state/task-board.status"
+  out=$(attention "$home" --status 2>&1)
+  status=$?
+  expect_code 3 "$status" "a dangling status stream must report unknown"
+  assert_contains "$out" 'attention=unknown' "a dangling status stream rendered a false empty set"
+  pass "linked state inputs follow targets and dangling links report unknown"
+}
+
 test_unknown_projection_surfaces_again_after_successful_derivation() {
   local home snapshot out status
   home=$(make_primary_home snapshot-unknown-reopens)
@@ -1182,6 +1218,7 @@ test_unbriefed_decision_is_honest_about_missing_language
 test_partial_briefing_renders_recorded_fields_and_names_missing_ones
 test_failed_backlog_projection_is_unknown_not_empty
 test_failed_state_collection_is_unknown_not_empty
+test_linked_state_inputs_follow_targets_and_dangling_links_are_unknown
 test_unknown_projection_surfaces_again_after_successful_derivation
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_overdue_monitored_wait_is_due_now
