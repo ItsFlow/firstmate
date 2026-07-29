@@ -31,8 +31,8 @@
 #              The captain is still owed what is being awaited and when it is
 #              next checked.
 # Only an explicit action-required `needs-decision` or `blocked` status
-# transition can turn a wait into a captain decision. Repetition never changes
-# who must act.
+# transition can turn a status-derived wait into a captain decision. Repetition
+# never changes who must act.
 #
 # IDENTITY AND DEDUPLICATION
 # Every record carries a stable, TEXT-FREE identity:
@@ -59,13 +59,13 @@
 # INTERRUPT.
 #
 # CONSUMERS
-#   bin/fm-attention.sh        the captain-facing renderer (pull, single place)
+#   bin/fm-attention.sh        the captain-facing chat renderer (pull, single place)
 #   bin/fm-guard.sh            surfaces a changed set on every guarded command
 #   bin/fm-turnend-guard.sh    stops a turn ending on an unsurfaced decision
 #   bin/fm-session-start.sh    the session-start digest section
 #   bin/fm-decision-hold.sh    writes the durable captain briefing this reads
 # All of them are harness-agnostic and runtime-backend-agnostic: this library
-# reads only data/backlog.md and state/*.status and never inspects a pane, an
+# reads only home-local backlog and state records and never inspects a pane, an
 # endpoint, or a harness.
 #
 # DEPENDENCIES

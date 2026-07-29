@@ -12,16 +12,19 @@ Every open item is exactly one of two things.
 - A **wait** is a meaningful delay that needs no captain action yet, including a declared external delay or backlog work held on another blocker.
   It still owes the captain what is being awaited and when it is next checked.
 
-A wait becomes a decision only through an explicit action-required `needs-decision` or `blocked` status transition.
+A status-derived wait becomes a decision only through an explicit action-required `needs-decision` or `blocked` status transition.
 Repetition never changes a routine external or timed wait into a critical alert.
 
 ## Where it comes from
 
 `bin/fm-attention-lib.sh` is the single owner of the contract.
-It derives the open set from state firstmate already keeps durably - `data/backlog.md` and `state/*.status` - and stores no item records of its own.
+It derives the open set from home-local records Firstmate already keeps - `data/backlog.md`, `state/*.meta`, and `state/*.status` - and uses `state/.last-watcher-beat` only to estimate a wait's next check.
+It stores no item records of its own.
 It is therefore not a second status surface, and it is harness-agnostic and runtime-backend-agnostic: it never inspects a pane, an endpoint, or a harness.
 Backlog rows are read through `bin/fm-fleet-snapshot.sh --backlog-json`, which remains the one owner of backlog parsing.
-If that projection or an existing state directory, metadata record, or status stream cannot be read, the result is unknown, not empty: renderers say that the open decision and wait list could not be determined, never print an all-clear, and never record a captain receipt.
+If that projection, state directory, metadata record, or status stream cannot be read, the result is unknown, not empty: renderers say that the open decision and wait list could not be determined, never print an all-clear, and never record a captain receipt.
+Firstmate follows readable symbolic links for the state directory and task records.
+A dangling link makes the set unknown instead of looking empty.
 
 A backlog row is a decision when it carries a captain hold with a reason and no unresolved blocker, whatever the item's own `kind` says.
 The documented way to gate ordinary work on the captain is `tasks-axi hold <id> --reason "<reason>" --kind captain`, which leaves `kind` as `ship`, so the snapshot's narrower `captain_actionable` flag is false for exactly the threads this contract exists for.

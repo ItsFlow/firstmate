@@ -2,7 +2,7 @@
 # fm-attention.sh - the single captain-facing place for open decisions and waits.
 #
 # Renders the captain-attention contract owned by bin/fm-attention-lib.sh, which
-# derives the open set from data/backlog.md and state/*.status. This command
+# derives the open set from home-local backlog and task state. This command
 # parses no fleet state of its own.
 #
 # Every open item is exactly one of two things:
@@ -10,7 +10,7 @@
 #   a wait     - a meaningful delay that needs no captain action yet, shown with
 #                what is being awaited and when it is next checked.
 # Only an explicit action-required `needs-decision` or `blocked` status
-# transition changes a wait into a captain decision.
+# transition changes a status-derived wait into a captain decision.
 #
 # A turn-end adapter may pass the actual assistant reply to --record-visible.
 # That mode validates the captain category, headline, and complete explanation

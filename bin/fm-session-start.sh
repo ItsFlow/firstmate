@@ -39,9 +39,9 @@
 #                       (bin/fm-attention.sh), printed before the supervision
 #                       block and the context because it is this turn's second
 #                       work queue and must be seen before the first
-#                       captain-facing reply. A locked session records the
-#                       surfaced digest when the full set can be read; a
-#                       read-only session does not.
+#                       captain-facing reply. Rendering this digest is read-only;
+#                       docs/captain-attention.md owns how an actual assistant
+#                       reply records a receipt.
 #   5. supervision    - the emitted operating block for this primary harness.
 #   6. context digest - data/projects.md, data/secondmates.md, data/captain.md,
 #                       data/captain-shared.md, data/learnings.md: read-only,

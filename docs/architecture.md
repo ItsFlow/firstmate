@@ -72,7 +72,7 @@ The guard covers the main primary and genuinely marked secondmate homes, exempts
 Both guards carry a second, independent concern that neither watcher liveness nor in-flight counting can express: whether the captain has been told what is waiting on him.
 `bin/fm-attention-lib.sh` derives that set from the backlog and the status event logs and gives it stable, prose-free identities, so the pull guard surfaces a changed set before any in-flight test and the turn-end guard stops a turn that would end on a decision the captain has never been shown.
 This is also where in-flight counting stops being the definition of an idle home: a primary holding only an unanswered decision has no metadata to count, so idleness is asserted against the derived set instead.
-[`captain-attention.md`](captain-attention.md) owns the contract, and `bin/fm-attention.sh` is the single captain-facing renderer.
+[`captain-attention.md`](captain-attention.md) owns the contract, and `bin/fm-attention.sh` is the single renderer Firstmate reads and relays into chat.
 
 A presence-gated sub-supervisor (`bin/fm-supervise-daemon.sh`) extends this for walk-away supervision: the `/afk` skill starts it through the tracked foreground helper `bin/fm-afk-start.sh`, after which the watcher reverts to daemon-managed one-shot mode and the daemon self-handles routine wakes in bash.
 The watcher and daemon share `bin/fm-classify-lib.sh` for captain-relevant status verbs, declared-external-wait vocabulary, and status-scan primitives.

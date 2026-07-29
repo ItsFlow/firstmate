@@ -108,7 +108,7 @@ state/               volatile runtime signals; gitignored
   x-poll.error x-poll.claim-error  generated X-mode relay and offer-claim diagnostic dedupe markers
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
-  .captain-attention digest of the open decision/wait set most recently rendered to a captain-facing surface; bounds the interrupt, never the ledger (bin/fm-attention-lib.sh)
+  .captain-attention digest of the open decision/wait set most recently verified in an actual assistant reply; bounds the interrupt, never the ledger (bin/fm-attention-lib.sh)
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
   .claude-autoarm.lock .claude-autoarm-epoch .turnend-claude-blocks   Claude Stop auto-arm single-flight, epoch, and guard-budget records; never touch
   .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak   watcher internals; never touch
@@ -144,7 +144,7 @@ A lock-refused session must not spawn, steer, merge, drain the wake queue, repai
 3. **Wake queue** - when locked, drains the durable wake queue and prints the raw records prominently as this turn's first work queue; a bounded, clearly labeled historical status-event annotation may follow a valid `signal` record but never replaces it or current-state reconciliation, and a lapsed watcher chain still surfaces here via the same guard alarm.
    When the lock could not be acquired and verified, the queue is left untouched because no session mutation is authorized, and the guard's tangle/watcher-liveness alarms still print in read-only advisory mode without drain, supervision repair, or checkout repair commands.
 4. **Captain's call** - every open captain decision and meaningful wait, printed as this turn's second work queue before the context and the supervision block, so the first captain-facing reply carries them.
-   `bin/fm-attention.sh` renders it and `docs/captain-attention.md` is the operator reference; a locked session records the surfaced set, a read-only session does not.
+   `bin/fm-attention.sh` renders it read-only; `docs/captain-attention.md` owns the operator contract and captain-receipt lifecycle.
 5. **Context digest** - the full contents of `data/projects.md`, `data/secondmates.md`, `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md`, each clearly delimited.
    A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use the firstmate repo's built-in defaults, `projects.md` absent means rebuild it from the clones under `projects/`, etc.).
 6. **Fleet-state digest** - the compact backlog listing owned by `bin/fm-session-start.sh`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead read of each task's recorded backend endpoint.
