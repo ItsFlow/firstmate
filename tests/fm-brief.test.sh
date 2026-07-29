@@ -96,8 +96,8 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   pass "fm-brief.sh: faster paths use configured authority without stacked review"
 }
 
-# Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
-# reference must render as plain prose with no dangling apostrophe artifact.
+# Pin the no-mistakes DOD lines that have regressed before: each must render as
+# plain prose with no apostrophe artifact.
 test_no_mistakes_dod_wording() {
   local home id brief
   home="$TMP_ROOT/wording-home"
@@ -116,6 +116,10 @@ test_no_mistakes_dod_wording() {
     "no-mistakes DOD must render literal backticks around help"
   assert_no_grep "no-mistakes' own guidance" "$brief" \
     "no-mistakes DOD regressed to the apostrophe form that breaks bash -n"
+  assert_grep "the authority check that firstmate applies" "$brief" \
+    "no-mistakes DOD lost the apostrophe-safe authority wording"
+  assert_no_grep "firstmate's authority check" "$brief" \
+    "no-mistakes DOD regressed to the authority apostrophe that breaks bash -n"
   pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
 }
 
