@@ -87,7 +87,11 @@ record_visible() {  # <home>
 
 add_row() {  # <home> <section> <line>
   local home=$1 section=$2 line=$3
-  awk -v section="## $section" -v row="$line" '
+  FM_TEST_SECTION="## $section" FM_TEST_ROW="$line" awk '
+    BEGIN {
+      section = ENVIRON["FM_TEST_SECTION"]
+      row = ENVIRON["FM_TEST_ROW"]
+    }
     { print }
     $0 == section { print row }
   ' "$home/data/backlog.md" > "$home/data/backlog.md.tmp"
@@ -107,6 +111,7 @@ add_unsurfaced_decision() {  # <home>
   add_row "$home" Queued \
     '- [ ] sample-decision-x - Approve the worker installs (repo: sample) (kind: captain) (since 2026-07-28) (hold: the machine needs approval before workers run there) (hold-kind: captain)
   Captain briefing v1:
+  Semantic revision: worker-installs-v1
   Choice: Approve the worker installs now, or leave the machine unavailable.
   Why now: The queued worker setup cannot proceed without the approval.
   If this waits: The worker setup and its dependent work remain stopped.
@@ -162,6 +167,7 @@ test_briefed_decision_renders_concretely() {
     --title 'Sync the fork main branch with the author upstream' \
     --reason 'The task board cannot be rebased or re-validated until the fork main matches upstream' \
     --repo firstmate \
+    --semantic-revision fork-main-sync-v1 \
     --choice 'Sync the fork main from the author upstream now, or keep it frozen and rebase the task board onto the current fork main.' \
     --why-now 'The task board is the last thing before the live view ships and cannot be validated against a stale fork main.' \
     --cost-of-waiting 'The task board stays parked and nothing else will move it.' \
@@ -192,12 +198,26 @@ test_new_decision_requires_a_complete_briefing() {
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync \
     --title 'Sync the fork main' --reason 'the board is waiting' --repo firstmate \
+    --semantic-revision fork-main-sync-v1 \
     --choice 'Sync now or wait.' --recommend 'Sync now.' 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "an incomplete initial briefing was accepted"
   assert_contains "$out" 'why-now must not be empty' "the missing briefing fact was not named"
   assert_not_contains "$(attention "$home" --no-mark --status)" 'decisions=1' \
     "an incomplete initial briefing created a live decision"
+
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" hold fork-sync fork-main-sync \
+    --title 'Sync the fork main' --reason 'the board is waiting' --repo firstmate \
+    --choice 'Sync now or wait.' \
+    --why-now 'The board is ready to move.' \
+    --cost-of-waiting 'The board remains stopped.' \
+    --option 'Sync now.' \
+    --recommend 'Sync now.' 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a complete briefing without a semantic revision was accepted"
+  assert_contains "$out" 'semantic-revision must be a non-empty privacy-safe slug' \
+    "the missing semantic revision was not named"
   pass "a new captain decision requires every briefing fact"
 }
 
@@ -401,9 +421,9 @@ test_overdue_monitored_wait_is_due_now() {
   pass "a monitored overdue wait reports its next check as due now"
 }
 
-test_repeated_wait_escalates_to_a_decision() {
+test_repeated_wait_stays_routine_until_captain_action_is_explicit() {
   local home out
-  home=$(make_home escalating-wait)
+  home=$(make_home repeated-wait)
   add_row "$home" 'In flight' \
     '- [ ] task-board - Live watchable view of the task and priority list (repo: sample) (kind: ship) (since 2026-07-23)'
   fm_write_meta "$home/state/task-board.meta" \
@@ -419,19 +439,19 @@ test_repeated_wait_escalates_to_a_decision() {
 
   printf 'paused: third recheck unchanged; the fork sync still has not landed\n' >> "$home/state/task-board.status"
   out=$(attention "$home" --no-mark --status)
-  assert_contains "$out" 'decisions=1' "a delay re-reported past the threshold must become a decision"
-  out=$(attention "$home" --no-mark)
-  assert_contains "$out" 're-reported 3 times' \
-    "the escalation must say why it stopped counting as routine"
-  assert_contains "$out" 'keep waiting on this, or change the plan' \
-    "the escalation must name the choice it puts to the captain"
+  assert_contains "$out" 'decisions=0' "repetition alone must not turn a routine delay into a decision"
+  assert_contains "$out" 'waits=1' "a repeated external delay must remain a wait"
 
-  # A resolution of that keyed phase ends the run, so the same work does not stay
-  # escalated forever once it genuinely moves again.
-  printf 'working: the fork sync landed; rebasing now\n' >> "$home/state/task-board.status"
+  printf 'blocked: firstmate must repair the failed synchronization\n' >> "$home/state/task-board.status"
   out=$(attention "$home" --no-mark --status)
-  assert_contains "$out" 'decisions=0' "progress must end the escalation"
-  pass "a delay that keeps repeating becomes a captain decision, and progress ends it"
+  assert_contains "$out" 'decisions=0' "a firstmate-actionable blocker must not become a captain decision"
+  assert_contains "$out" 'waits=1' "a firstmate-actionable blocker must remain a visible delay"
+
+  printf 'needs-decision: choose whether to keep waiting or reroute the work\n' >> "$home/state/task-board.status"
+  out=$(attention "$home" --no-mark --status)
+  assert_contains "$out" 'decisions=1' "an explicit captain-action transition must create a decision"
+  assert_contains "$out" 'waits=0' "the same keyed wait must fold into the explicit decision"
+  pass "a routine delay becomes critical only through an explicit captain-action transition"
 }
 
 test_same_key_decision_and_wait_render_once_as_combined() {
@@ -440,7 +460,7 @@ test_same_key_decision_and_wait_render_once_as_combined() {
   add_row "$home" 'In flight' \
     '- [ ] task-board - Live watchable view of the task and priority list (repo: sample) (kind: ship) (since 2026-07-23)'
   fm_write_meta "$home/state/task-board.meta" \
-    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=ship"
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
   {
     printf 'needs-decision [key=release]: choose whether to keep the release parked\n'
     printf 'paused [key=release]: waiting for legal review\n'
@@ -459,7 +479,69 @@ test_same_key_decision_and_wait_render_once_as_combined() {
   assert_contains "$out" 'waiting for the final legal answer' "the combined alert omitted the current wait fact"
   assert_not_contains "$out" 'WAITING ON SOMETHING ELSE' \
     "the same keyed issue was rendered under a second category"
-  pass "one keyed issue renders once as a combined decision and wait"
+
+  printf 'done [key=release]: the worker finished\n' >> "$home/state/task-board.status"
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq -r '.[0] | [.class, (.combined_wait // false), (.awaiting // "")] | join("|")')" \
+    = 'decision|false|' ] \
+    || fail "terminal work left a stale wait attached to the unresolved decision: $json"
+  pass "one keyed issue combines once and terminal work closes only its wait portion"
+}
+
+test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work() {
+  local home out json status
+  command -v tasks-axi >/dev/null 2>&1 || { pass "skip-ish: tasks-axi absent, combined transfer not exercised"; return 0; }
+  home=$(make_home combined-transfer)
+  add_row "$home" 'In flight' \
+    '- [ ] task-board - Live watchable view of the task and priority list (repo: sample) (kind: ship) (since 2026-07-23)'
+  fm_write_meta "$home/state/task-board.meta" \
+    "window=fixture:fm-task-board" "project=$home/projects/sample" "kind=secondmate"
+  {
+    printf 'needs-decision [key=release]: choose whether to ship after legal review\n'
+    printf 'paused [key=release]: waiting for the final legal answer\n'
+  } > "$home/state/task-board.status"
+  touch "$home/state/.last-watcher-beat"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" hold task-board release \
+    --title 'Choose the release path' \
+    --reason 'legal review is pending' \
+    --repo sample \
+    --semantic-revision release-v1 \
+    --choice 'Ship after approval, or keep the release parked.' \
+    --why-now 'The release is otherwise ready to move.' \
+    --cost-of-waiting 'The release remains parked.' \
+    --option 'Ship after legal approval.' \
+    --option 'Keep the release parked.' \
+    --recommend 'Ship after legal approval.' >/dev/null \
+    || fail "could not register the combined captain decision"
+
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq 'length')" -eq 1 ] || fail "the durable decision duplicated its live status copy: $json"
+  [ "$(printf '%s' "$json" | jq -r '.[0] | "\(.identity)|\(.briefing_complete)|\(.combined_wait)|\(.awaiting)"')" \
+    = 'decision:task-board-decision-release|true|true|waiting for the final legal answer' ] \
+    || fail "the durable decision did not retain the combined wait: $json"
+  out=$(attention "$home")
+  printf '%s' "$out" | attention "$home" --record-visible >/dev/null
+  status=$?
+  expect_code 0 "$status" "a complete combined alert must earn a captain-visible receipt"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    "$HOLD" complete task-board release >/dev/null \
+    || fail "could not transfer the combined decision"
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq -r '.[0] | "\(.briefing_complete)|\(.combined_wait)|\(.awaiting)"')" \
+    = 'true|true|waiting for the final legal answer' ] \
+    || fail "the captain-held transfer lost the combined wait: $json"
+
+  printf 'done [key=release]: the reviewed work finished\n' >> "$home/state/task-board.status"
+  json=$(attention "$home" --json)
+  [ "$(printf '%s' "$json" | jq -r '.[0] | [.briefing_complete, (.combined_wait // false), (.awaiting // "")] | join("|")')" \
+    = 'true|false|' ] \
+    || fail "terminal work left stale combined-wait text: $json"
+  assert_not_contains "$(attention "$home")" 'waiting for the final legal answer' \
+    "terminal work must remove the stale combined wait from the captain view"
+  pass "a combined alert remains receiptable through transfer and terminal work clears its wait"
 }
 
 # --- deduplication ----------------------------------------------------------
@@ -619,6 +701,7 @@ test_resolution_clears_the_item() {
     --title 'Sync the fork main branch with the author upstream' \
     --reason 'the board cannot be rebased until the fork main matches upstream' \
     --repo firstmate \
+    --semantic-revision fork-main-sync-v1 \
     --choice 'Sync now, or rebase onto the current fork main.' \
     --why-now 'The board is ready to rebase now.' \
     --cost-of-waiting 'The board remains blocked.' \
@@ -649,6 +732,7 @@ test_retry_never_erases_a_written_briefing() {
   printf 'working: auditing\n' > "$home/state/fork-sync.status"
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'a reason' --repo firstmate \
+    --semantic-revision fork-main-sync-v1 \
     --choice 'Sync now, or rebase onto the current fork main.' \
     --why-now 'The board is ready to rebase now.' \
     --cost-of-waiting 'The board remains blocked.' \
@@ -665,6 +749,7 @@ test_retry_never_erases_a_written_briefing() {
   # Supplying briefing flags updates it.
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'a reason' \
+    --semantic-revision fork-main-sync-v2 \
     --choice 'Sync now, or rebase onto the current fork main.' \
     --why-now 'The board is ready to rebase now.' \
     --cost-of-waiting 'The board remains blocked.' \
@@ -684,6 +769,7 @@ test_briefing_revisions_preserve_body_and_reopen_receipt_semantically() {
   printf 'working: auditing\n' > "$home/state/fork-sync.status"
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the board is waiting' --repo firstmate \
+    --semantic-revision fork-main-sync-v1 \
     --choice 'Sync now, or rebase onto the current fork main.' \
     --why-now 'The board is ready to rebase now.' \
     --cost-of-waiting 'The board remains blocked.' \
@@ -693,7 +779,8 @@ test_briefing_revisions_preserve_body_and_reopen_receipt_semantically() {
   body_file="$home/body-with-escapes"
   {
     printf 'Origin: fork-sync\nDecision key: fork-main-sync\nState: awaiting captain decision.\n\n'
-    printf 'Captain briefing v1:\nChoice: Sync now, or rebase onto the current fork main.\n'
+    printf 'Captain briefing v1:\nSemantic revision: fork-main-sync-v1\n'
+    printf 'Choice: Sync now, or rebase onto the current fork main.\n'
     printf 'Why now: The board is ready to rebase now.\nIf this waits: The board remains blocked.\n'
     printf 'Option: Sync now.\nRecommended: Sync now.\n'
     printf 'Operator note: C:\\fleet\tquoted "yes"\rcontrol='
@@ -705,6 +792,7 @@ test_briefing_revisions_preserve_body_and_reopen_receipt_semantically() {
 
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the board is waiting' \
+    --semantic-revision fork-main-sync-v1 \
     --choice 'Sync now, or rebase onto the current fork main.' \
     --why-now 'The board is ready to rebase now.' \
     --cost-of-waiting 'The board remains blocked.' \
@@ -723,12 +811,18 @@ test_briefing_revisions_preserve_body_and_reopen_receipt_semantically() {
   record_visible "$home"
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the same wait in different words' \
-    >/dev/null || fail "the wording-only retry failed"
+    --semantic-revision fork-main-sync-v1 \
+    --choice 'Choose between synchronizing now and rebasing on the current fork.' \
+    --why-now 'The board can proceed as soon as this direction is settled.' \
+    --cost-of-waiting 'Until then, the board cannot advance.' \
+    --option 'Synchronize now.' \
+    --recommend 'Synchronize now.' >/dev/null || fail "the wording-only briefing update failed"
   out=$(attention "$home" --status)
   assert_contains "$out" 'decisions_new=false' "a wording-only edit reopened the captain receipt"
 
   FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     "$HOLD" hold fork-sync fork-main-sync --title 'Sync the fork main' --reason 'the same wait in different words' \
+    --semantic-revision fork-main-sync-v2 \
     --choice 'Sync now, or rebase onto the current fork main.' \
     --why-now 'The board is ready to rebase now.' \
     --cost-of-waiting 'The board remains blocked.' \
@@ -737,6 +831,63 @@ test_briefing_revisions_preserve_body_and_reopen_receipt_semantically() {
   out=$(attention "$home" --status)
   assert_contains "$out" 'decisions_new=true' "a substantive briefing revision did not reopen the receipt"
   pass "briefing revisions preserve escaped body data and reopen receipts only for substance"
+}
+
+test_receipt_validation_keeps_each_alert_facts_with_its_headline() {
+  local home mixed reply status
+  home=$(make_home receipt-association)
+  add_unsurfaced_decision "$home"
+  add_row "$home" Queued \
+    '- [ ] sample-decision-y - Choose the launch window (repo: sample) (kind: captain) (since 2026-07-28) (hold: the release needs a launch window) (hold-kind: captain)
+  Captain briefing v1:
+  Semantic revision: launch-window-v1
+  Choice: Launch on Tuesday, or wait until Thursday.
+  Why now: The release plan is ready for a date.
+  If this waits: The release team cannot schedule the rollout.
+  Option: Launch on Tuesday.
+  Option: Launch on Thursday.
+  Recommended: Launch on Tuesday.'
+
+  mixed="CAPTAIN'S CALL
+
+NEEDS YOUR DECISION
+
+1. Approve the worker installs
+   The choice:
+     Launch on Tuesday, or wait until Thursday.
+   Why it matters now:
+     The release plan is ready for a date.
+   If this waits:
+     The release team cannot schedule the rollout.
+   Options:
+     - Launch on Tuesday.
+     - Launch on Thursday.
+   Recommended:
+     Launch on Tuesday.
+
+2. Choose the launch window
+   The choice:
+     Approve the worker installs now, or leave the machine unavailable.
+   Why it matters now:
+     The queued worker setup cannot proceed without the approval.
+   If this waits:
+     The worker setup and its dependent work remain stopped.
+   Options:
+     - Approve the installs now.
+     - Leave the machine unavailable and reroute the work.
+   Recommended:
+     Approve the installs now so the queued setup can proceed."
+  printf '%s' "$mixed" | attention "$home" --record-visible >/dev/null 2>&1
+  status=$?
+  [ "$status" -ne 0 ] || fail "facts swapped between two alert records earned a receipt"
+  assert_absent "$home/state/.captain-attention" \
+    "a cross-record receipt mismatch must not write the captain marker"
+
+  reply=$(attention "$home")
+  printf '%s' "$reply" | attention "$home" --record-visible >/dev/null
+  status=$?
+  expect_code 0 "$status" "the correctly associated alert records must earn a receipt"
+  pass "captain receipts validate each alert headline with its own required facts"
 }
 
 # --- the primary-activity blind spot ----------------------------------------
@@ -902,8 +1053,9 @@ test_failed_backlog_projection_is_unknown_not_empty
 test_unknown_projection_surfaces_again_after_successful_derivation
 test_routine_wait_states_what_it_awaits_and_when_it_is_next_checked
 test_overdue_monitored_wait_is_due_now
-test_repeated_wait_escalates_to_a_decision
+test_repeated_wait_stays_routine_until_captain_action_is_explicit
 test_same_key_decision_and_wait_render_once_as_combined
+test_combined_alert_is_receiptable_through_transfer_and_clears_on_terminal_work
 test_identities_ignore_wording_so_repeats_do_not_re_alarm
 test_reopened_status_items_get_new_generation_identity
 test_brief_form_never_spends_captain_surface_marker
@@ -914,6 +1066,7 @@ test_ledger_keeps_showing_an_open_item_after_it_was_surfaced
 test_resolution_clears_the_item
 test_retry_never_erases_a_written_briefing
 test_briefing_revisions_preserve_body_and_reopen_receipt_semantically
+test_receipt_validation_keeps_each_alert_facts_with_its_headline
 test_unaccounted_primary_work_is_not_idle
 test_turn_end_requires_a_captain_visible_complete_alert
 test_claude_autoarm_allow_paths_still_stop_for_unsurfaced_decisions

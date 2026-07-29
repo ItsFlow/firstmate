@@ -30,11 +30,9 @@
 #              declared external delay or backlog work held on another blocker.
 #              The captain is still owed what is being awaited and when it is
 #              next checked.
-# A status-log wait that has been re-declared FM_ATTENTION_WAIT_REDECLARES times
-# (default 3) without ever resolving is escalated to a decision, because a delay
-# that keeps repeating is by definition no longer clearing on its own. That
-# escalation is derived from the keyed event fold, never from reading the prose
-# of the wait, so it cannot false-positive on wording.
+# Only an explicit `needs-decision` status transition can turn a wait into a
+# captain decision. Repetition and firstmate-actionable blockers never change
+# who must act.
 #
 # IDENTITY AND DEDUPLICATION
 # Every record carries a stable, TEXT-FREE identity:
@@ -45,8 +43,7 @@
 # Identities exclude all prose deliberately: a wait re-declared hourly with
 # slightly different wording keeps ONE identity while it stays open, so a
 # standing delay is surfaced once rather than every hour. If that wait clears and
-# later opens again, the generation changes. An escalated wait keeps its wait
-# identity and only changes class, so escalation itself surfaces exactly once.
+# later opens again, the generation changes.
 #
 # SURFACING
 # state/.captain-attention records the digest of the set most recently verified
@@ -56,9 +53,10 @@
 # A digest that differs from the recorded one means the set CHANGED and has not
 # been shown since. Rendering is read-only. The explicit receipt path validates
 # categories, headlines, and complete briefings before writing either digest.
-# Decision digests include substantive briefing fields, while wait identities
-# stay text-free. The marker never suppresses the ledger itself - an open item
-# stays rendered until it is resolved; the marker only bounds the INTERRUPT.
+# Decision digests use the briefing's explicit semantic revision, while wait
+# identities stay text-free. The marker never suppresses the ledger itself - an
+# open item stays rendered until it is resolved; the marker only bounds the
+# INTERRUPT.
 #
 # CONSUMERS
 #   bin/fm-attention.sh        the captain-facing renderer (pull, single place)
@@ -89,11 +87,6 @@ _FM_ATTENTION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)
 # data/backlog.md with no endpoint, secondmate, or network reads.
 FM_ATTENTION_SNAPSHOT_BIN="${FM_ATTENTION_SNAPSHOT_BIN:-$_FM_ATTENTION_LIB_DIR/fm-fleet-snapshot.sh}"
 
-# How many times a declared wait may be re-declared before it stops counting as
-# routine and becomes a captain decision.
-FM_ATTENTION_WAIT_REDECLARES=${FM_ATTENTION_WAIT_REDECLARES:-3}
-case "$FM_ATTENTION_WAIT_REDECLARES" in ''|*[!0-9]*|0) FM_ATTENTION_WAIT_REDECLARES=3 ;; esac
-
 # --- durable captain briefing grammar ---------------------------------------
 #
 # The plain language a captain needs is not derivable from backlog metadata, so
@@ -101,6 +94,7 @@ case "$FM_ATTENTION_WAIT_REDECLARES" in ''|*[!0-9]*|0) FM_ATTENTION_WAIT_REDECLA
 # library reads it back. One writer, one reader, one grammar, stated here.
 #
 #   Captain briefing v1:
+#   Semantic revision: <privacy-safe slug>
 #   Choice: <one line>
 #   Why now: <one line>
 #   If this waits: <one line>
@@ -112,23 +106,25 @@ case "$FM_ATTENTION_WAIT_REDECLARES" in ''|*[!0-9]*|0) FM_ATTENTION_WAIT_REDECLA
 # renders; it is marked as not yet written rather than dressing up a raw
 # operational note as if it were plain language.
 FM_ATTENTION_BRIEF_HEADER='Captain briefing v1:'
+FM_ATTENTION_BRIEF_REVISION='Semantic revision:'
 FM_ATTENTION_BRIEF_CHOICE='Choice:'
 FM_ATTENTION_BRIEF_WHY='Why now:'
 FM_ATTENTION_BRIEF_COST='If this waits:'
 FM_ATTENTION_BRIEF_OPTION='Option:'
 FM_ATTENTION_BRIEF_RECOMMEND='Recommended:'
 
-# fm_attention_brief_lines <choice> <why-now> <cost> <recommend> [option...]
+# fm_attention_brief_lines <semantic-revision> <choice> <why-now> <cost> <recommend> [option...]
 # Print the durable briefing block for a hold body, or nothing when no field was
 # supplied. Fields are emitted in fixed order so an idempotent re-registration
 # produces byte-identical output.
 fm_attention_brief_lines() {
-  local choice=${1:-} why=${2:-} cost=${3:-} recommend=${4:-} opt
-  shift 4 2>/dev/null || true
-  if [ -z "$choice" ] && [ -z "$why" ] && [ -z "$cost" ] && [ -z "$recommend" ] && [ "$#" -eq 0 ]; then
+  local revision=${1:-} choice=${2:-} why=${3:-} cost=${4:-} recommend=${5:-} opt
+  shift 5 2>/dev/null || true
+  if [ -z "$revision" ] && [ -z "$choice" ] && [ -z "$why" ] && [ -z "$cost" ] && [ -z "$recommend" ] && [ "$#" -eq 0 ]; then
     return 0
   fi
   printf '%s\n' "$FM_ATTENTION_BRIEF_HEADER"
+  [ -z "$revision" ] || printf '%s %s\n' "$FM_ATTENTION_BRIEF_REVISION" "$revision"
   [ -z "$choice" ] || printf '%s %s\n' "$FM_ATTENTION_BRIEF_CHOICE" "$choice"
   [ -z "$why" ] || printf '%s %s\n' "$FM_ATTENTION_BRIEF_WHY" "$why"
   [ -z "$cost" ] || printf '%s %s\n' "$FM_ATTENTION_BRIEF_COST" "$cost"
@@ -253,7 +249,7 @@ fm_attention_status_rows() {  # <state-dir>
       note=$(status_line_note "$line")
       note=${note//$'\t'/ }
       case "$verb" in
-        needs-decision|blocked)
+        needs-decision)
           existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
           if [ -n "$existing" ]; then
             IFS=$'\t' read -r _ dverb gen dnote dn dwait <<EOF
@@ -280,28 +276,44 @@ EOF
           waits=$(_fm_attention_drop_key "$waits" "$key")
           [ -n "$waits" ] && waits="${waits}"$'\n'
           ;;
-        "$resolve"|"$held")
+        "$resolve")
           decisions=$(_fm_attention_drop_key "$decisions" "$key")
           [ -n "$decisions" ] && decisions="${decisions}"$'\n'
           waits=$(_fm_attention_drop_key "$waits" "$key")
           [ -n "$waits" ] && waits="${waits}"$'\n'
           ;;
+        "$held")
+          existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
+          waits=$(_fm_attention_drop_key "$waits" "$key")
+          [ -n "$waits" ] && waits="${waits}"$'\n'
+          if [ -n "$existing" ]; then
+            IFS=$'\t' read -r _ dverb gen dnote dn dwait <<EOF
+$existing
+EOF
+            if [ "$dn" -gt 0 ] && [ -n "$dwait" ]; then
+              gen=$(_fm_attention_generation_get "$wait_gens" "$key")
+              gen=$((gen + 1))
+              wait_gens=$(_fm_attention_generation_set "$wait_gens" "$key" "$gen")
+              waits="${waits}${key}"$'\t'"${pause}"$'\t'"${gen}"$'\t'"${dn}"$'\t'"${dwait}"$'\n'
+            fi
+          fi
+          decisions=$(_fm_attention_drop_key "$decisions" "$key")
+          [ -n "$decisions" ] && decisions="${decisions}"$'\n'
+          ;;
         done|failed|working)
           waits=$(_fm_attention_drop_key "$waits" "$key")
           [ -n "$waits" ] && waits="${waits}"$'\n'
-          if [ "$verb" = working ]; then
-            existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
-            if [ -n "$existing" ]; then
-              IFS=$'\t' read -r _ dverb gen dnote dn dwait <<EOF
+          existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
+          if [ -n "$existing" ]; then
+            IFS=$'\t' read -r _ dverb gen dnote dn dwait <<EOF
 $existing
 EOF
-              decisions=$(_fm_attention_drop_key "$decisions" "$key")
-              [ -n "$decisions" ] && decisions="${decisions}"$'\n'
-              decisions="${decisions}${key}"$'\t'"${dverb}"$'\t'"${gen}"$'\t'"${dnote}"$'\t0\t\n'
-            fi
+            decisions=$(_fm_attention_drop_key "$decisions" "$key")
+            [ -n "$decisions" ] && decisions="${decisions}"$'\n'
+            decisions="${decisions}${key}"$'\t'"${dverb}"$'\t'"${gen}"$'\t'"${dnote}"$'\t0\t\n'
           fi
           ;;
-        "$pause")
+        blocked|"$pause")
           existing=$(_fm_attention_row_for_key "$decisions" "$key" || true)
           if [ -n "$existing" ]; then
             IFS=$'\t' read -r _ dverb gen dnote n dwait <<EOF
@@ -371,8 +383,8 @@ fm_attention_json() {  # <fm-home>
   rows=$(fm_attention_status_rows "$state")
   printf '%s' "$rows" | jq -Rn \
     --argjson backlog "$backlog_json" \
-    --argjson escalate "$FM_ATTENTION_WAIT_REDECLARES" \
     --arg brief_header "$FM_ATTENTION_BRIEF_HEADER" \
+    --arg f_revision "$FM_ATTENTION_BRIEF_REVISION" \
     --arg f_choice "$FM_ATTENTION_BRIEF_CHOICE" \
     --arg f_why "$FM_ATTENTION_BRIEF_WHY" \
     --arg f_cost "$FM_ATTENTION_BRIEF_COST" \
@@ -383,13 +395,14 @@ fm_attention_json() {  # <fm-home>
     def fields($lines; $label):
       [ $lines[] | select(startswith($label)) | ltrimstr($label) | sub("^[[:space:]]+"; "") | select(length > 0) ];
     def empty_briefing:
-      {briefed:false,briefing_complete:false,choice:null,why_now:null,cost_of_waiting:null,options:[],recommendation:null,briefing_missing:[]};
+      {briefed:false,briefing_complete:false,semantic_revision:null,choice:null,why_now:null,cost_of_waiting:null,options:[],recommendation:null,briefing_missing:[]};
     def briefing($record):
       ($record.body_lines // []) as $lines
       | if ($lines | index($brief_header)) == null then
           empty_briefing
         else
-          (field($lines; $f_choice)) as $choice
+          (field($lines; $f_revision)) as $revision
+          | (field($lines; $f_choice)) as $choice
           | (field($lines; $f_why)) as $why
           | (field($lines; $f_cost)) as $cost
           | (fields($lines; $f_option)) as $options
@@ -398,7 +411,8 @@ fm_attention_json() {  # <fm-home>
               empty_briefing
             else
               {briefed:true,
-               briefing_complete:($choice != null and $why != null and $cost != null and ($options | length) > 0 and $recommend != null),
+               briefing_complete:($revision != null and $choice != null and $why != null and $cost != null and ($options | length) > 0 and $recommend != null),
+               semantic_revision:$revision,
                choice:$choice,
                why_now:$why,
                cost_of_waiting:$cost,
@@ -440,6 +454,7 @@ fm_attention_json() {  # <fm-home>
            blocked_by:[],
            redeclares:0,
            escalated:false,
+           combined_wait:false,
            next_check_seconds:null}
           + briefing(.) ];
     def backlog_waits:
@@ -460,8 +475,9 @@ fm_attention_json() {  # <fm-home>
            blocked_by:(.unresolved_blocker_ids // []),
            redeclares:0,
            escalated:false,
+           combined_wait:false,
            next_check_seconds:null,
-           briefed:false,briefing_complete:false,choice:null,why_now:null,cost_of_waiting:null,
+           briefed:false,briefing_complete:false,semantic_revision:null,choice:null,why_now:null,cost_of_waiting:null,
            options:[],recommendation:null,briefing_missing:[]} ];
     def status_rows:
       [ inputs
@@ -481,10 +497,12 @@ fm_attention_json() {  # <fm-home>
       ([ $backlog.records[]? | select(.structured == true and .id == $id) | .title ] | .[0]) // null;
     def status_records:
       [ status_rows[]
-        | (.redeclares >= $escalate) as $esc
-        | {class:(if .class == "wait" and $esc then "decision" else .class end),
+        | {class:.class,
            identity:(.class + ":" + .id + ":" + .key + ":" + .generation),
-           source:(if .class == "wait" then "declared-wait" else "status-decision" end),
+           source:(if .class == "wait" and .verb == "blocked" then "status-blocker"
+                   elif .class == "wait" then "declared-wait"
+                   else "status-decision"
+                   end),
            id:.id,
            key:.key,
            headline:(work_title(.id) // (.note | if . == "" then .id else . end)),
@@ -492,12 +510,36 @@ fm_attention_json() {  # <fm-home>
            awaiting:(if .awaiting == "" then null else .awaiting end),
            blocked_by:[],
            redeclares:.redeclares,
-           escalated:(.class == "wait" and $esc),
+           escalated:false,
            combined_wait:(.class == "decision" and .awaiting != ""),
            next_check_seconds:(if .class == "wait" or .awaiting != "" then .next_check_seconds else null end),
-           briefed:false,briefing_complete:false,choice:null,why_now:null,cost_of_waiting:null,
+           briefed:false,briefing_complete:false,semantic_revision:null,choice:null,why_now:null,cost_of_waiting:null,
            options:[],recommendation:null,briefing_missing:[]} ];
-    (backlog_decisions + status_records) as $primary
+    (backlog_decisions) as $backlog_decisions
+    | (status_records) as $status_records
+    | [ $backlog_decisions[] as $decision
+        | ([ $status_records[]
+             | select((.id + "-decision-" + .key) == $decision.id) ] | .[0]) as $live
+        | if $live == null then
+            $decision
+          elif (($live.combined_wait == true or $live.class == "wait") and $live.awaiting != null) then
+            $decision + {
+              combined_wait:true,
+              awaiting:$live.awaiting,
+              redeclares:$live.redeclares,
+              next_check_seconds:$live.next_check_seconds
+            }
+          else
+            $decision
+          end
+      ] as $merged_decisions
+    | [ $status_records[]
+        | . as $status
+        | select(($backlog_decisions
+                  | any(.id == ($status.id + "-decision-" + $status.key)))
+                 | not)
+      ] as $unmatched_status
+    | ($merged_decisions + $unmatched_status) as $primary
     # A live declared wait supersedes the backlog-level wait row for the same
     # work item: both describe one thing waiting, and the live one carries the
     # current wording and the next check time. Keeping both would show the
@@ -525,43 +567,90 @@ _fm_attention_normalize_message() {
 }
 
 fm_attention_message_covers() {  # <message> <all|decisions>
-  local message=$1 scope=${2:-all} required expected normalized_message normalized_expected
+  local message=$1 scope=${2:-all} required class expected normalized_message normalized_expected
+  local decision_cursor='' wait_cursor='' decision_started=0 wait_started=0
   normalized_message=$(printf '%s' "$message" | _fm_attention_normalize_message)
   required=$(printf '%s' "$FM_ATT_JSON" | jq -r --arg scope "$scope" '
-    def decision_requirements:
-      if .escalated == true then
-        ["NEEDS YOUR DECISION", .headline,
-         "The choice:", "keep waiting on this, or change the plan so it stops holding the work up.",
-         "What was reported:", .detail]
-      elif .briefing_complete == true then
-        ["NEEDS YOUR DECISION", .headline,
-         "The choice:", .choice,
-         "Why it matters now:", .why_now,
-         "If this waits:", .cost_of_waiting,
-         "Options:"] + .options + ["Recommended:", .recommendation]
+    def norm:
+      tostring
+      | gsub("[[:space:]]+"; " ")
+      | sub("^ "; "")
+      | sub(" $"; "");
+    def decision_block:
+      if .briefing_complete == true then
+        ([.headline,
+          "The choice:", .choice,
+          "Why it matters now:", .why_now,
+          "If this waits:", .cost_of_waiting,
+          "Options:"]
+         + (.options | map("- " + .))
+         + ["Recommended:", .recommendation]
+         + (if .combined_wait == true
+            then ["Waiting for:", .awaiting, "Next check:"]
+            else []
+            end))
+        | map(norm)
+        | join(" ")
       else
-        ["__FIRSTMATE_INCOMPLETE_BRIEFING__"]
-      end
-      + (if .combined_wait == true then ["Waiting for:", .awaiting, "Next check:"] else [] end);
-    def wait_requirements:
-      ["WAITING ON SOMETHING ELSE", .headline, "Waiting for:", .awaiting, "Next check:"];
+        "__FIRSTMATE_INCOMPLETE_BRIEFING__"
+      end;
+    def wait_block:
+      [.headline, "Waiting for:", (.awaiting // ""), "Next check:"]
+      | map(norm)
+      | join(" ");
     if length == 0 then
-      ["Nothing needs your decision, and nothing is waiting."]
+      "empty\tNothing needs your decision, and nothing is waiting."
     else
-      [ .[]
-        | select($scope == "all" or .class == "decision")
-        | if .class == "decision" then decision_requirements else wait_requirements end
-        | .[] ]
-      | unique
+      .[]
+      | select($scope == "all" or .class == "decision")
+      | if .class == "decision"
+        then "decision\t\(decision_block)"
+        else "wait\t\(wait_block)"
+        end
     end
-    | .[]
   ' 2>/dev/null) || return 1
-  while IFS= read -r expected; do
+  while IFS=$'\t' read -r class expected; do
     [ -n "$expected" ] || continue
     [ "$expected" != "__FIRSTMATE_INCOMPLETE_BRIEFING__" ] || return 1
     normalized_expected=$(printf '%s' "$expected" | _fm_attention_normalize_message)
-    case "$normalized_message" in
-      *"$normalized_expected"*) ;;
+    case "$class" in
+      empty)
+        case "$normalized_message" in
+          *"$normalized_expected"*) ;;
+          *) return 1 ;;
+        esac
+        ;;
+      decision)
+        if [ "$decision_started" -eq 0 ]; then
+          case "$normalized_message" in
+            *"NEEDS YOUR DECISION"*)
+              decision_cursor=${normalized_message#*"NEEDS YOUR DECISION"}
+              decision_cursor=${decision_cursor%%"WAITING ON SOMETHING ELSE"*}
+              decision_started=1
+              ;;
+            *) return 1 ;;
+          esac
+        fi
+        case "$decision_cursor" in
+          *"$normalized_expected"*) decision_cursor=${decision_cursor#*"$normalized_expected"} ;;
+          *) return 1 ;;
+        esac
+        ;;
+      wait)
+        if [ "$wait_started" -eq 0 ]; then
+          case "$normalized_message" in
+            *"WAITING ON SOMETHING ELSE"*)
+              wait_cursor=${normalized_message#*"WAITING ON SOMETHING ELSE"}
+              wait_started=1
+              ;;
+            *) return 1 ;;
+          esac
+        fi
+        case "$wait_cursor" in
+          *"$normalized_expected"*) wait_cursor=${wait_cursor#*"$normalized_expected"} ;;
+          *) return 1 ;;
+        esac
+        ;;
       *) return 1 ;;
     esac
   done <<EOF
@@ -621,17 +710,21 @@ fm_attention_status() {  # <fm-home>
   # One jq pass for counts and both identity lists; this runs on every guarded
   # command, so it must not spawn a process per field.
   summary=$(printf '%s' "$FM_ATT_JSON" | jq -r '
-    def receipt_identity:
+    def semantic_identity:
+      .semantic_revision // "__missing_semantic_revision__";
+    def decision_receipt_identity:
+      {identity,class,semantic_revision:semantic_identity}
+      | @json;
+    def attention_receipt_identity:
       if .class == "decision" then
-        {identity,class,headline,choice,why_now,cost_of_waiting,options,recommendation,
-         escalated,combined_wait}
+        {decision:decision_receipt_identity,combined_wait:(.combined_wait == true)}
         | @json
       else
         .identity
       end;
     "\(length) \([.[] | select(.class == "decision")] | length)",
-    "--attention--", (.[] | receipt_identity),
-    "--decisions--", (.[] | select(.class == "decision") | receipt_identity)' 2>/dev/null) || summary=''
+    "--attention--", (.[] | attention_receipt_identity),
+    "--decisions--", (.[] | select(.class == "decision") | decision_receipt_identity)' 2>/dev/null) || summary=''
   if [ -n "$summary" ]; then
     FM_ATT_COUNT=${summary%%$'\n'*}
     FM_ATT_DECISIONS=${FM_ATT_COUNT#* }

@@ -12,8 +12,8 @@ Every open item is exactly one of two things.
 - A **wait** is a meaningful delay that needs no captain action yet, including a declared external delay or backlog work held on another blocker.
   It still owes the captain what is being awaited and when it is next checked.
 
-A status-log wait that has been re-declared at least `FM_ATTENTION_WAIT_REDECLARES` times (default 3) without ever clearing is promoted to a decision, because a delay that keeps repeating is no longer resolving on its own.
-That promotion is derived from the keyed event fold, never from reading the wording of the delay, so it cannot fire on phrasing alone.
+A wait becomes a decision only through an explicit `needs-decision` status transition.
+Repetition never changes a routine external or timed wait into a critical alert.
 
 ## Where it comes from
 
@@ -30,7 +30,8 @@ A captain hold whose blocker is still open is not answerable yet and stays a wai
 ## The durable captain briefing
 
 A title and a one-line reason cannot carry a decision, so every renderer could only truncate them.
-`bin/fm-decision-hold.sh hold` requires `--choice`, `--why-now`, `--cost-of-waiting`, at least one `--option`, and `--recommend` for every new hold and explicit revision, and stores that plain language in the hold's own durable body.
+`bin/fm-decision-hold.sh hold` requires `--semantic-revision`, `--choice`, `--why-now`, `--cost-of-waiting`, at least one `--option`, and `--recommend` for every new hold and explicit revision, and stores that plain language in the hold's own durable body.
+The privacy-safe semantic revision stays the same for wording-only paraphrases and changes whenever the choice, stakes, waiting cost, options, or recommendation changes substantively.
 Supplying the complete briefing rewrites it and preserves unrecognized body lines; supplying no briefing flags leaves an existing complete briefing untouched, so an idempotent retry never erases one.
 Legacy decisions with no briefing still render and are marked as incomplete, rather than presenting a raw operational note as if it were plain language or recording a captain receipt.
 A partial briefing renders the fields that were written and names the missing ones.
@@ -56,15 +57,16 @@ Keep that rule in step when either side changes it.
 ## Surfacing, deduplication, and false alarms
 
 `state/.captain-attention` records the digest of the set most recently verified in an actual assistant reply by `bin/fm-attention.sh --record-visible`.
-Every rendering mode is read-only; only `--record-visible`, fed the assistant message by a turn-end adapter, can record a receipt, and it requires the correct category, headline, and every briefing fact.
+Every rendering mode is read-only; only `--record-visible`, fed the assistant message by a turn-end adapter, can record a receipt, and it validates each alert as one associated block with the correct category, headline, and that record's own briefing facts.
 Firstmate-facing projections such as the default view, `--brief`, `--json`, `--status`, and `--no-mark` cannot spend the receipt.
 Identities carry no prose, so a delay re-reported hourly with new wording stays one item and surfaces once; if that delay clears and later opens again, its generation changes and it surfaces again.
-Decision receipts include the semantic briefing fields, so changing the choice, stakes, waiting cost, options, or recommendation reopens the receipt while a wording-only operational note does not.
+Decision receipts include the explicit semantic revision, so a substantive revision reopens the receipt while a wording-only paraphrase does not.
 A keyed status decision and wait are folded into one combined decision alert.
+When that decision is transferred to its durable captain item, the current wait remains attached until a terminal work outcome closes the wait portion.
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 
 The turn-end stop remains active until the complete alert appears in an actual captain-visible assistant reply.
-Routine external and timed waits never stop a turn because they need no captain action; a repeated wait promoted to a decision does.
+Routine external and timed waits never stop a turn because they need no captain action.
 An unknown derivation can also stop a turn once, using a separate unknown marker so a broken projection cannot loop the session and cannot mark a decision set as surfaced.
 Read-only calls never reset the unknown marker; an explicitly mutating turn-end or receipt path resets it after a readable derivation, so a later derivation failure is surfaced as a fresh unknown.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables that stop without touching the watcher-liveness backstop, and `FM_GUARD_NO_ATTENTION=1` suppresses the guard section.

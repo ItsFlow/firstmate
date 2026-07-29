@@ -20,6 +20,7 @@
 #   fm-decision-hold.sh id <origin-id> <decision-key>
 #   fm-decision-hold.sh hold <origin-id> <decision-key> \
 #     --title <title> --reason <reason> [--repo <repo>] \
+#     --semantic-revision <privacy-safe-slug> \
 #     --choice <text> --why-now <text> --cost-of-waiting <text> \
 #     --option <text> [--option <text>]... --recommend <text>
 #   fm-decision-hold.sh complete <origin-id> (--none | <decision-key>...)
@@ -33,9 +34,11 @@
 # truncate them. The briefing flags above record that plain language durably in
 # the hold body, in the grammar owned by bin/fm-attention-lib.sh, and
 # bin/fm-attention.sh renders it as the captain-facing explanation. Each value is
-# one line. New holds and explicit briefing revisions require every field.
-# Supplying briefing flags rewrites the briefing block and preserves unrecognized
-# body lines; supplying none leaves an existing complete briefing untouched.
+# one line. New holds and explicit briefing revisions require every field and a
+# semantic revision slug. Reuse the slug for wording-only paraphrases and change
+# it when the decision's substance changes. Supplying briefing flags rewrites
+# the briefing block and preserves unrecognized body lines; supplying none
+# leaves an existing complete briefing untouched.
 #
 # `complete` is the shared investigation and visual-review completion gate.
 # `--none` is an explicit semantic attestation that the just-reviewed surface has
@@ -125,9 +128,10 @@ briefing_complete_body() {  # <encoded-body>
     const value = (label) => lines.some((line) => line.startsWith(`${label} `) && line.slice(label.length + 1).length > 0);
     if (!lines.includes(process.argv[1])) process.exit(1);
     if (!value(process.argv[2]) || !value(process.argv[3]) || !value(process.argv[4]) ||
-        !value(process.argv[5]) || !value(process.argv[6])) process.exit(1);
-  ' "$FM_ATTENTION_BRIEF_HEADER" "$FM_ATTENTION_BRIEF_CHOICE" "$FM_ATTENTION_BRIEF_WHY" \
-    "$FM_ATTENTION_BRIEF_COST" "$FM_ATTENTION_BRIEF_OPTION" "$FM_ATTENTION_BRIEF_RECOMMEND"
+        !value(process.argv[5]) || !value(process.argv[6]) || !value(process.argv[7])) process.exit(1);
+  ' "$FM_ATTENTION_BRIEF_HEADER" "$FM_ATTENTION_BRIEF_REVISION" "$FM_ATTENTION_BRIEF_CHOICE" \
+    "$FM_ATTENTION_BRIEF_WHY" "$FM_ATTENTION_BRIEF_COST" "$FM_ATTENTION_BRIEF_OPTION" \
+    "$FM_ATTENTION_BRIEF_RECOMMEND"
 }
 
 write_updated_body_file() {  # <encoded-body> <replacement-prefix>
@@ -147,9 +151,9 @@ write_updated_body_file() {  # <encoded-body> <replacement-prefix>
     const preserved = body.split("\n").filter((line) => !owned(line)).join("\n");
     const output = process.env.FM_DECISION_PREFIX + (preserved.length > 0 ? `\n${preserved}` : "");
     fs.writeFileSync(process.argv[1], output);
-  ' "$body_file" "$FM_ATTENTION_BRIEF_HEADER" "$FM_ATTENTION_BRIEF_CHOICE" \
-    "$FM_ATTENTION_BRIEF_WHY" "$FM_ATTENTION_BRIEF_COST" "$FM_ATTENTION_BRIEF_OPTION" \
-    "$FM_ATTENTION_BRIEF_RECOMMEND"; then
+  ' "$body_file" "$FM_ATTENTION_BRIEF_HEADER" "$FM_ATTENTION_BRIEF_REVISION" \
+    "$FM_ATTENTION_BRIEF_CHOICE" "$FM_ATTENTION_BRIEF_WHY" "$FM_ATTENTION_BRIEF_COST" \
+    "$FM_ATTENTION_BRIEF_OPTION" "$FM_ATTENTION_BRIEF_RECOMMEND"; then
     rm -f "$body_file"
     fail "could not decode the existing captain decision body"
   fi
@@ -307,7 +311,7 @@ command_id() {
 
 command_hold() {
   local origin=${1:-} key=${2:-} title='' reason='' repo='' id show state kind existing_title body
-  local choice='' why='' cost='' recommend='' brief_given=0 brief_block='' existing_body body_file
+  local semantic_revision='' choice='' why='' cost='' recommend='' brief_given=0 brief_block='' existing_body body_file
   local -a options=()
   [ "$#" -ge 2 ] || { usage >&2; exit 2; }
   shift 2
@@ -316,6 +320,7 @@ command_hold() {
       --title) shift; title=${1:-} ;;
       --reason) shift; reason=${1:-} ;;
       --repo) shift; repo=${1:-} ;;
+      --semantic-revision) shift; semantic_revision=${1:-}; brief_given=1 ;;
       --choice) shift; choice=${1:-}; brief_given=1 ;;
       --why-now) shift; why=${1:-}; brief_given=1 ;;
       --cost-of-waiting) shift; cost=${1:-}; brief_given=1 ;;
@@ -333,7 +338,8 @@ command_hold() {
   if [ "$brief_given" -eq 1 ]; then
     validate_complete_briefing "$choice" "$why" "$cost" "$recommend" \
       "${options[@]+"${options[@]}"}"
-    brief_block=$(fm_attention_brief_lines "$choice" "$why" "$cost" "$recommend" \
+    validate_slug semantic-revision "$semantic_revision"
+    brief_block=$(fm_attention_brief_lines "$semantic_revision" "$choice" "$why" "$cost" "$recommend" \
       "${options[@]+"${options[@]}"}")
   fi
   require_tasks_axi

@@ -9,10 +9,8 @@
 #   a decision - your answer is needed before the work can move;
 #   a wait     - a meaningful delay that needs no captain action yet, shown with
 #                what is being awaited and when it is next checked.
-# A status-log wait that has been re-reported FM_ATTENTION_WAIT_REDECLARES times
-# without clearing is promoted to a decision, because it is no longer resolving
-# on its own. That promotion is derived from the event fold, never from the
-# wording.
+# Only an explicit `needs-decision` status transition changes a wait into a
+# captain decision.
 #
 # A turn-end adapter may pass the actual assistant reply to --record-visible.
 # That mode validates the captain category, headline, and complete explanation
@@ -107,7 +105,7 @@ record_visible() {
     seen_att=$FM_ATT_DIGEST
     wrote=1
   fi
-  if fm_attention_message_covers "$message" decisions; then
+  if [ "$FM_ATT_DECISIONS" -gt 0 ] && fm_attention_message_covers "$message" decisions; then
     seen_dec=$FM_ATT_DECISION_DIGEST
     wrote=1
   fi
@@ -181,7 +179,7 @@ field() {  # <index> <jq-path>
 
 render_view() {
   local total=$FM_ATT_COUNT n=$FM_ATT_DECISIONS w=$FM_ATT_WAITS i num=0
-  local class headline choice why cost recommend detail awaiting briefed escalated redeclares next opts missing combined
+  local class headline choice why cost recommend detail awaiting briefed next opts missing combined
 
   printf "CAPTAIN'S CALL\n"
   if [ "$total" -eq 0 ]; then
@@ -201,18 +199,11 @@ render_view() {
       num=$((num + 1))
       headline=$(field "$i" '.headline')
       briefed=$(field "$i" '.briefed')
-      escalated=$(field "$i" '.escalated')
-      redeclares=$(field "$i" '.redeclares')
       detail=$(field "$i" '.detail')
       combined=$(field "$i" '.combined_wait')
       printf '\n'
       wrap_prefixed "$(printf '%s. ' "$num")" 3 "$headline"
-      if [ "$escalated" = true ]; then
-        wrap 3 "This was reported as a routine delay, but it has been re-reported $redeclares times without clearing, so it is no longer resolving on its own."
-        printf '   The choice: keep waiting on this, or change the plan so it stops holding the work up.\n'
-        printf '   What was reported:\n'
-        wrap 5 "$detail"
-      elif [ "$briefed" = true ]; then
+      if [ "$briefed" = true ]; then
         choice=$(field "$i" '.choice')
         why=$(field "$i" '.why_now')
         cost=$(field "$i" '.cost_of_waiting')
@@ -278,7 +269,7 @@ EOF
 }
 
 render_brief() {
-  local total=$FM_ATT_COUNT i class id headline complete escalated next mark
+  local total=$FM_ATT_COUNT i class id headline complete next mark
   if [ "$total" -eq 0 ]; then
     printf "CAPTAIN'S CALL: nothing open.\n"
     return 0
@@ -291,12 +282,9 @@ render_brief() {
     id=$(field "$i" '.id')
     headline=$(field "$i" '.headline')
     complete=$(field "$i" '.briefing_complete')
-    escalated=$(field "$i" '.escalated')
     mark=''
     if [ "$class" = decision ]; then
-      if [ "$escalated" = true ]; then
-        mark=' [repeated delay, no longer clearing]'
-      elif [ "$complete" != true ]; then
+      if [ "$complete" != true ]; then
         mark=' [no captain briefing recorded - add one with bin/fm-decision-hold.sh hold]'
       fi
     else

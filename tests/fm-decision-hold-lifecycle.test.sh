@@ -105,6 +105,7 @@ run_decisions() {  # <home> <command args...>
   if [ "${1:-}" = hold ] && [ "$#" -ge 3 ] \
     && ! grep -qE "^- \\[[ x]\\] ${2}-decision-${3} -" "$home/data/backlog.md"; then
     set -- "$@" \
+      --semantic-revision "${3}-v1" \
       --choice "Choose how to resolve ${3}." \
       --why-now "The reviewed work cannot proceed until ${3} is decided." \
       --cost-of-waiting "The dependent work remains stopped." \

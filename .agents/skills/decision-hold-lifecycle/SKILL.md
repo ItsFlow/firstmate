@@ -18,6 +18,7 @@ Every unresolved decision that belongs to the captain and is discovered while pr
 The agent performs the semantic inventory because scripts must not infer decisions from report prose, visual-review artifacts, terminal output, or chat.
 Give each distinct unresolved decision a stable privacy-safe key, register it through `bin/fm-decision-hold.sh hold`, and use the same key on retry so registration is idempotent while different decisions retain different durable identities.
 Register it with its captain briefing in the same call: the concrete choice, why it matters now, what waiting costs, at least one real option, and your recommendation.
+Give that briefing a stable privacy-safe semantic revision, reuse the revision for wording-only paraphrases, and change it whenever the choice, stakes, waiting cost, options, or recommendation changes substantively.
 A title and a one-line reason cannot carry a decision, so the script refuses a new hold without that briefing; the briefing is what makes the decision answerable without further investigation.
 After inventorying the whole report and review surface, run `bin/fm-decision-hold.sh complete` with every unresolved key, or with `--none` only when the reviewed surface contains no unresolved captain decision.
 A completed investigation and an ended visual review use this same owner and completion command; a visual tool, including Lavish, never owns a parallel completion policy.
