@@ -2072,8 +2072,7 @@ SH
   cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'guard\n' >> "${FM_GUARD_LOG:?}"
-printf 'guard should not run\n' >&2
-exit 2
+exit 0
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh" "$repo/bin/fm-turnend-guard.sh"
   out=$(ARM_PLUGIN="$arm_plugin" GUARD_PLUGIN="$guard_plugin" WORKTREE="$repo" FM_HOME="$home" FM_ARM_LOG="$log" FM_GUARD_LOG="$guard_log" node 2>&1 <<'EOF'
@@ -2109,8 +2108,8 @@ if (!existsSync(process.env.FM_ARM_LOG)) {
   console.error("watch arm did not run");
   process.exit(1);
 }
-if (existsSync(process.env.FM_GUARD_LOG)) {
-  console.error("turn-end guard ran before the watch arm could establish supervision");
+if (!existsSync(process.env.FM_GUARD_LOG)) {
+  console.error("turn-end attention gate did not run after watch coordination");
   process.exit(1);
 }
 if (promptBody) {
@@ -2120,9 +2119,9 @@ if (promptBody) {
 EOF
 )
   status=$?
-  expect_code 0 "$status" "OpenCode turn-end guard must let the auto-arm plugin establish supervision first"
+  expect_code 0 "$status" "OpenCode turn-end guard must evaluate attention after auto-arm coordination"
   [ -z "$out" ] || fail "OpenCode coordination test printed output: $out"
-  pass "OpenCode watcher plugin coordinates with the turn-end guard"
+  pass "OpenCode watcher coordination is followed by the attention gate"
 }
 
 test_opencode_healthy_arm_output_does_not_suppress_guard() {

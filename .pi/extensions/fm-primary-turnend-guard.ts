@@ -7,6 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { encodeFirstmateOperationalInput } from "./lib/fm-operational-input.ts";
 
 let guardFollowupActive = false;
+let lastAssistantMessage = "";
 
 type LockOwnership = "owned" | "missing" | "other";
 
@@ -61,7 +62,33 @@ function runSessionstartNudge(): string {
   return result.stdout.trim();
 }
 
-function runGuard(): Promise<{ code: number; stderr: string }> {
+// The shared guard has two independent stops and says which one fired in its own
+// banner (bin/fm-turnend-guard.sh owns both headlines). A captain decision that
+// has never been shown to the captain is not a supervision lapse, so the passive
+// follow-up must not claim the watcher is down.
+const CAPTAIN_CALL_HEADLINE = "TURN WOULD END WITHOUT TELLING THE CAPTAIN";
+const UNKNOWN_HEADLINE = "TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS";
+
+function turnEndPrefix(stderr: string): string {
+  if (stderr.includes(CAPTAIN_CALL_HEADLINE)) {
+    return (
+      "TURN WOULD END WITHOUT TELLING THE CAPTAIN. " +
+      "A decision is waiting on him that he has never been shown. Relay it in plain language before ending the turn.\n\n"
+    );
+  }
+  if (stderr.includes(UNKNOWN_HEADLINE)) {
+    return (
+      "TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS. " +
+      "The open decision and wait list is unknown. Restore that list before reporting an all-clear.\n\n"
+    );
+  }
+  return (
+    "TURN WOULD END BLIND - supervision is off. " +
+    "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n"
+  );
+}
+
+function runGuard(message: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
     const child = spawn(`${root}/bin/fm-turnend-guard.sh`, {
       stdio: ["pipe", "ignore", "pipe"],
@@ -72,8 +99,22 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
     });
     child.on("error", () => resolveResult({ code: 0, stderr: "" }));
     child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
-    child.stdin.end('{"stop_hook_active":false}');
+    child.stdin.end(JSON.stringify({ stop_hook_active: false, last_assistant_message: message }));
   });
+}
+
+function assistantText(message: unknown): string {
+  if (!message || typeof message !== "object") return "";
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part): part is { type: string; text: string } =>
+      Boolean(part && typeof part === "object" &&
+        (part as { type?: unknown }).type === "text" &&
+        typeof (part as { text?: unknown }).text === "string"))
+    .map((part) => part.text)
+    .join("\n");
 }
 
 // PreToolUse seatbelts (bin/fm-arm-pretool-check.sh, docs/arm-pretool-check.md;
@@ -135,22 +176,34 @@ export default function (pi: ExtensionAPI) {
     return { block: true, reason: result.stderr.trim() || "denied by the watcher-arm PreToolUse seatbelt" };
   });
 
-  pi.on("agent_settled", async () => {
-    if (guardFollowupActive) {
-      guardFollowupActive = false;
+  pi.on("agent_end", (event) => {
+    const messages = (event as { messages?: unknown[] }).messages;
+    if (!Array.isArray(messages)) return;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i] as { role?: unknown };
+      if (message?.role !== "assistant") continue;
+      lastAssistantMessage = assistantText(message);
       return;
     }
+  });
 
-    const result = await runGuard();
+  pi.on("agent_settled", async () => {
+    const suppressRoutineFollowup = guardFollowupActive;
+    if (guardFollowupActive) {
+      guardFollowupActive = false;
+    }
+
+    const result = await runGuard(lastAssistantMessage);
     if (result.code !== 2) return;
+    const attentionStop =
+      result.stderr.includes(CAPTAIN_CALL_HEADLINE) || result.stderr.includes(UNKNOWN_HEADLINE);
+    if (suppressRoutineFollowup && !attentionStop) return;
 
     guardFollowupActive = true;
     try {
       const content = encodeFirstmateOperationalInput(
         "turn-end-guard",
-        "TURN WOULD END BLIND - supervision is off. " +
-          "The watcher cycle is missing, failed, or unhealthy. Follow the harness recovery instruction below before ending the turn.\n\n" +
-          result.stderr,
+        turnEndPrefix(result.stderr) + result.stderr,
       );
       await pi.sendUserMessage(content, { deliverAs: "followUp" });
     } catch {

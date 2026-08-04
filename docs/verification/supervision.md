@@ -175,6 +175,46 @@ FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
 FM_GROK_STOP_LIVE_E2E=1 FM_GROK_NATIVE_BIN="$native_grok" FM_GROK_LEGACY_BIN="$pre_native_grok" tests/fm-grok-stop-live-e2e.test.sh
 ```
 
+## Captain's call: decisions and waits
+
+Review date: 2026-07-30.
+
+The captain-attention contract adds two cross-harness delivery guards: a pull banner from `bin/fm-guard.sh`, which reaches every harness through ordinary tool output, and a push turn-end stop from `bin/fm-turnend-guard.sh`, which reaches each harness through that harness's existing Stop adapter.
+Every supported primary harness was reviewed against its own adapter rather than against the adapters active in the current fleet.
+
+| Primary harness | Stop adapter | Result for the captain's-call stop |
+| --- | --- | --- |
+| Claude | `.claude/settings.json` runs `bin/fm-turnend-guard.sh --claude` | Exit 2 with stderr blocks and shows the banner. The stop runs only on paths where the watcher predicate already allowed, and it never writes `state/.turnend-claude-blocks`, so the Claude block budget and the Stop-owned auto-arm cooperation are unchanged. |
+| Codex | `.codex/hooks.json` pipes the payload into the shared script | Exit 2 blocks with the banner, unchanged mechanism. |
+| Grok | `bin/fm-turnend-guard-grok.sh` | A native payload delegates exit 0 or 2 and stderr directly. The pre-native bounded resume now selects its headline from the guard's own banner, so a captain decision is no longer announced as a supervision lapse. |
+| OpenCode | `.opencode/plugins/fm-primary-turnend-guard.js`, passive `session.idle` | Watcher coordination runs first, then every idle evaluates the shared attention gate with the observed assistant reply; routine recovery stays bounded. |
+| Pi and pi-signed | `.pi/extensions/fm-primary-turnend-guard.ts`, passive `agent_settled` | Every settled reply evaluates the shared gate with evidence captured on `agent_end`; routine recovery stays bounded. |
+| Kimi | `bin/fm-kimi-turnend-hook.sh` | Not applicable: Kimi is a verified crew harness only. `bin/fm-supervision-instructions.sh` resolves no Kimi primary block, and the Kimi Stop hook only touches a crew task's turn-end marker. There is no primary integration surface to change. |
+| Unknown | `docs/supervision-protocols/unknown.md` | The pull banner still reaches the session through tool output; the push stop exits 2, which an unverified harness may ignore. Pull-side coverage is unaffected. |
+
+Every runtime backend - tmux, herdr, zellij, orca, cmux, and codex-app - is not applicable, and the integration surface was inspected rather than assumed.
+`bin/fm-attention-lib.sh` reads only home-local backlog and state inputs and calls no backend function.
+Backlog rows come from `bin/fm-fleet-snapshot.sh --backlog-json`, which returns before `task_json_lines`, the only backend-touching part of that script, so no endpoint or session-provider call happens on this path.
+The one derived value that could have varied by backend is a wait's next-check time; it is computed from `state/.last-watcher-beat`, which `bin/fm-watch.sh` touches every poll on every backend, and the cadence constant owned by `bin/fm-classify-lib.sh`.
+
+The captain-facing behavior and the primary-activity blind spot are covered deterministically:
+
+```sh
+bash tests/fm-attention.test.sh
+```
+
+The suite covers complete briefing creation, full escape preservation, semantic receipt revisions, combined keyed alerts, read-only marker behavior, actual assistant-delivery receipts, the bounded surfaced-once decision stop on an evidence-less Stop payload, wait timing, resolution, readable linked state, dangling-link unknown states, and the primary-activity blind spot.
+
+Current entry points:
+
+```sh
+tests/fm-attention.test.sh
+tests/fm-turnend-guard.test.sh
+tests/fm-guard-stale-banner.test.sh
+tests/fm-decision-hold-lifecycle.test.sh
+tests/fm-fleet-snapshot-view.test.sh
+```
+
 ## Watcher continuity
 
 The cross-harness evidence combines the 2026-07-17 live pass with Claude's replacement Stop-owned path revalidated on 2026-07-24, all against isolated project and home state.

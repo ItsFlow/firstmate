@@ -10,6 +10,19 @@
 # bin/fm-turnend-guard.sh uses the status fields here for its banner but performs
 # its end-of-turn block decision with the live watcher lock check in
 # bin/fm-wake-lib.sh.
+#
+# SCOPE, and the blind spot this library deliberately does NOT close.
+# FM_SUP_IN_FLIGHT counts state/*.meta, which exist only after bin/fm-spawn.sh
+# runs. That makes this library an accurate answer to "does a watcher need to be
+# running", and a WRONG answer to "is this home idle": a primary holding work
+# itself - an unanswered captain decision, a standing external delay - has no
+# metadata to count and reads as zero. Unaccounted primary work must look
+# suspicious rather than idle, so the idleness predicate is owned by
+# fm_attention_home_idle in bin/fm-attention-lib.sh, which adds the derived
+# captain-attention set to the counts below. It is kept OUT of FM_SUP_NEEDED on
+# purpose: a standing decision needs the captain, not a watcher, and folding it
+# in here would demand a live watcher forever on any home with a long-lived open
+# decision.
 
 # Portable mtime; Linux stat lacks -f, macOS stat lacks -c.
 fm_sup_stat_mtime() {

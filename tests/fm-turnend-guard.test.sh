@@ -107,9 +107,15 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
+  cp "$ROOT/bin/fm-attention-lib.sh" "$dir/bin/fm-attention-lib.sh"
+  cp "$ROOT/bin/fm-classify-lib.sh" "$dir/bin/fm-classify-lib.sh"
+  cp "$ROOT/bin/fm-fleet-snapshot.sh" "$dir/bin/fm-fleet-snapshot.sh"
+  cp "$ROOT/bin/fm-backend.sh" "$dir/bin/fm-backend.sh"
+  cp "$ROOT/bin/fm-ff-lib.sh" "$dir/bin/fm-ff-lib.sh"
+  cp "$ROOT/bin/fm-attention.sh" "$dir/bin/fm-attention.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
-  chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh"
+  chmod +x "$dir/bin/fm-turnend-guard.sh" "$dir/bin/fm-turnend-guard-grok.sh" "$dir/bin/fm-operational-input.sh" "$dir/bin/fm-supervision-instructions.sh" "$dir/bin/fm-harness.sh" "$dir/bin/fm-attention.sh" "$dir/bin/fm-fleet-snapshot.sh"
 }
 
 mark_codex_hook_root() {
@@ -811,6 +817,10 @@ test_opencode_plugin_forces_followup() {
   assert_contains "$content" 'promptAsync' "OpenCode plugin must force a follow-up turn"
   assert_contains "$content" 'encodeFirstmateOperationalInput' "OpenCode plugin must use the typed operational-input constructor"
   assert_contains "$content" 'skipNextIdle' "OpenCode plugin must carry a loop guard"
+  assert_contains "$content" 'message.updated' "OpenCode plugin must observe the assistant reply"
+  assert_contains "$content" 'last_assistant_message' "OpenCode plugin must pass captain-visible evidence to the shared guard"
+  assert_contains "$content" 'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS' \
+    "OpenCode plugin must classify the explicit unknown state"
   assert_contains "$content" 'worktree' "OpenCode plugin must anchor the guard from the git worktree path"
   assert_contains "$content" 'watcher cycle is missing, failed, or unhealthy' "OpenCode plugin must identify a blind turn as watcher recovery"
   assert_contains "$content" 'harness recovery instruction below' "OpenCode plugin must delegate recovery action to the shared guard line"
@@ -819,23 +829,25 @@ test_opencode_plugin_forces_followup() {
 }
 
 test_opencode_plugin_anchors_guard_to_worktree() {
-  local plugin parent worktree_dir wrong_dir out status
+  local plugin parent worktree_dir wrong_dir payload_log out status
   plugin="$ROOT/.opencode/plugins/fm-primary-turnend-guard.js"
   [ -f "$plugin" ] || fail "tracked OpenCode primary plugin is missing"
   parent="$TMP_ROOT/opencode-plugin-parent"
   git init -q "$parent"
   worktree_dir="$parent/nested/opencode-plugin-worktree"
   wrong_dir="$TMP_ROOT/opencode-plugin-cwd/subdir"
+  payload_log="$TMP_ROOT/opencode-plugin-payload.json"
   mkdir -p "$worktree_dir/bin" "$wrong_dir"
   cat > "$worktree_dir/bin/fm-turnend-guard.sh" <<'EOF'
 #!/usr/bin/env bash
-cat >/dev/null
+cat > "${FM_PAYLOAD_LOG:?}"
 printf 'guard-fired\n' >&2
 exit 2
 EOF
   chmod +x "$worktree_dir/bin/fm-turnend-guard.sh"
   # Runtime module-format warnings are host noise; this assertion owns plugin output only.
-  out=$(NODE_NO_WARNINGS=1 PLUGIN="$plugin" DIRECTORY="$wrong_dir" WORKTREE="$worktree_dir" node 2>&1 <<'EOF'
+  out=$(NODE_NO_WARNINGS=1 PLUGIN="$plugin" DIRECTORY="$wrong_dir" WORKTREE="$worktree_dir" FM_PAYLOAD_LOG="$payload_log" node 2>&1 <<'EOF'
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
@@ -852,7 +864,18 @@ const hooks = await mod.FmPrimaryTurnendGuard({
   directory: process.env.DIRECTORY,
   worktree: process.env.WORKTREE,
 });
+await hooks.event({ event: { type: "message.updated", properties: {
+  info: { role: "assistant", sessionID: "session-test", id: "message-test" },
+} } });
+await hooks.event({ event: { type: "message.part.updated", properties: {
+  part: { type: "text", sessionID: "session-test", messageID: "message-test", id: "part-test", text: "captain-visible answer" },
+} } });
 await hooks.event({ event: { type: "session.idle", properties: { sessionID: "session-test" } } });
+const payload = JSON.parse(readFileSync(process.env.FM_PAYLOAD_LOG, "utf8"));
+if (payload.last_assistant_message !== "captain-visible answer") {
+  console.error(`missing assistant evidence: ${JSON.stringify(payload)}`);
+  process.exit(1);
+}
 if (!promptBody.startsWith("\u2063FIRSTMATE_OP: v1 turn-end-guard: ")) {
   console.error(`untyped operational prompt: ${promptBody}`);
   process.exit(1);
@@ -888,6 +911,10 @@ test_pi_extension_forces_followup() {
   assert_contains "$content" 'encodeFirstmateOperationalInput' "pi extension must use the typed operational-input constructor"
   assert_contains "$content" 'deliverAs: "followUp"' "pi extension must queue the follow-up safely"
   assert_contains "$content" 'guardFollowupActive' "pi extension must carry a logical-run loop guard"
+  assert_contains "$content" 'agent_end' "pi extension must observe the assistant reply"
+  assert_contains "$content" 'last_assistant_message' "pi extension must pass captain-visible evidence to the shared guard"
+  assert_contains "$content" 'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS' \
+    "pi extension must classify the explicit unknown state"
   assert_not_contains "$content" 'skipNextTurnEnd' "pi extension kept the internal-turn loop guard"
   assert_contains "$content" 'watcher cycle is missing, failed, or unhealthy' "pi extension must identify a blind turn as watcher recovery"
   assert_contains "$content" 'harness recovery instruction below' "pi extension must delegate recovery action to the shared guard line"
@@ -911,10 +938,10 @@ test_pi_extension_injects_once_per_logical_agent_run() {
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$ext"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
-  cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
+cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
 #!/usr/bin/env bash
-cat >/dev/null
-printf 'guard\n' >> "${FM_GUARD_LOG:?}"
+cat >> "${FM_GUARD_LOG:?}"
+printf '\n' >> "${FM_GUARD_LOG:?}"
 printf 'logical-run guard fired\n' >&2
 exit 2
 SH
@@ -948,24 +975,34 @@ mod.default(pi);
 if (handlers.has("turn_end")) throw new Error("guard still treats internal Pi turns as logical runs");
 const settled = handlers.get("agent_settled");
 if (!settled) throw new Error("agent_settled handler was not registered");
+const ended = handlers.get("agent_end");
+if (!ended) throw new Error("agent_end handler was not registered");
 
+await ended({ messages: [{ role: "assistant", content: [{ type: "text", text: "captain reply one" }] }] });
 await settled({ type: "agent_settled" }, {});
 if (prompts !== 1) throw new Error(`no-tool run injected ${prompts} follow-ups`);
 
 for (let i = 0; i < 3; i += 1) {
   await handlers.get("turn_end")?.({ type: "turn_end", turnIndex: i }, {});
 }
+await ended({ messages: [{ role: "assistant", content: "captain reply two" }] });
 await settled({ type: "agent_settled" }, {});
 if (prompts !== 2) throw new Error(`multi-tool run produced ${prompts - 1} follow-ups`);
 
-const guardRuns = readFileSync(process.env.FM_GUARD_LOG, "utf8").trim().split("\n").length;
-if (guardRuns !== 2) throw new Error(`guard predicate ran ${guardRuns} times for two logical runs`);
+const guardRuns = readFileSync(process.env.FM_GUARD_LOG, "utf8").trim().split("\n").map((row) => JSON.parse(row));
+if (guardRuns.length !== 4) throw new Error(`guard predicate ran ${guardRuns.length} times for two replies and their follow-ups`);
+if (guardRuns[0].last_assistant_message !== "captain reply one" ||
+    guardRuns[1].last_assistant_message !== "captain reply one" ||
+    guardRuns[2].last_assistant_message !== "captain reply two" ||
+    guardRuns[3].last_assistant_message !== "captain reply two") {
+  throw new Error(`assistant evidence was not preserved: ${JSON.stringify(guardRuns)}`);
+}
 EOF
 )
   status=$?
   expect_code 0 "$status" "Pi guard must inject once for no-tool and multi-tool logical runs"
   [ -z "$out" ] || fail "Pi logical-run guard test printed output: $out"
-  pass ".pi primary extension: no-tool and multi-tool runs each inject exactly one guard follow-up"
+  pass ".pi primary extension: every reply is gated while routine recovery stays bounded"
 }
 
 test_pi_extension_retries_after_followup_delivery_failure() {
@@ -1178,13 +1215,17 @@ test_hook_claude_mode_secondmate_reblocks_like_primary() {
 }
 
 test_grok_hook_invokes_adapter() {
-  local settings command
+  local settings command adapter
   settings="$ROOT/.grok/hooks/fm-primary-turnend-guard.json"
   [ -f "$settings" ] || fail "tracked grok primary hook config is missing"
   command=$(jq -r '.hooks.Stop[0].hooks[0].command // empty' "$settings")
   [ -n "$command" ] || fail "Stop hook command is missing from grok primary hook config"
   assert_contains "$command" 'GROK_WORKSPACE_ROOT' "grok hook must anchor from GROK_WORKSPACE_ROOT"
   assert_contains "$command" 'fm-turnend-guard-grok.sh' "grok hook must invoke the adapter"
+  adapter=$(cat "$ROOT/bin/fm-turnend-guard-grok.sh")
+  assert_contains "$adapter" 'last_assistant_message' "grok adapter must preserve captain-visible evidence"
+  assert_contains "$adapter" 'TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS' \
+    "grok adapter must classify the explicit unknown state"
   pass ".grok primary hook: Stop hook invokes the grok adapter"
 }
 

@@ -28,10 +28,24 @@
 # primary checkout - the main home or a genuinely marked secondmate home - and
 # stay a silent, fast no-op inside child task worktrees.
 #
-# Loop-guard, codex/Grok (default) mode: never block twice in the same turn.
+# Two independent turn-end stops live here, in this order:
+#   1. supervision is off while work is in flight (the original backstop);
+#   2. a captain decision is open that has never reached a captain-facing
+#      surface (the captain's-call stop, bin/fm-attention-lib.sh).
+# The second only runs on the paths where the first ALLOWS, so the two never
+# stack and the load-bearing watcher alarm keeps priority. Its internal render is
+# read-only; only an actual assistant reply carrying the complete alert records
+# the captain receipt. When the Stop payload cannot carry the assistant reply,
+# state/.captain-attention-decisions bounds the decision stop to one block per
+# changed decision set - mirroring the unknown marker - so an evidence-less
+# harness can always end its turn while the pull surfaces keep the decision
+# visible.
+#
+# Loop-guard, codex/Grok (default) mode: watcher recovery never blocks twice in the same turn.
 # Codex uses stop_hook_active and Grok uses stopHookActive; typed camel-case
 # takes precedence when both spellings are present. A true value means the
-# current stop attempt already follows a block, so this guard always allows it.
+# current stop attempt already follows a watcher-recovery block; the independent
+# captain-attention gate still evaluates it.
 # Passive harness adapters provide their own one-follow-up guard before calling
 # this script.
 # That bounds those harnesses to at most one forced continuation per turn -
@@ -70,6 +84,10 @@ CLAUDE_MODE=0
 SYNC_WAIT_MS=${FM_CLAUDE_AUTOARM_SYNC_WAIT_MS:-800}
 EPOCH_FRESH=${FM_CLAUDE_AUTOARM_EPOCH_FRESH:-15}
 BLOCK_BUDGET=${FM_CLAUDE_TURNEND_BLOCK_BUDGET:-3}
+# The captain-decision turn-end stop. On by default; set to 0 to disable it
+# without touching the watcher-liveness backstop.
+FM_ATTENTION_TURNEND_BLOCK=${FM_ATTENTION_TURNEND_BLOCK:-1}
+case "$FM_ATTENTION_TURNEND_BLOCK" in 1|true|TRUE|yes|YES) FM_ATTENTION_TURNEND_BLOCK=1 ;; *) FM_ATTENTION_TURNEND_BLOCK=0 ;; esac
 case "$SYNC_WAIT_MS" in ''|*[!0-9]*) SYNC_WAIT_MS=800 ;; esac
 case "$EPOCH_FRESH" in ''|*[!0-9]*|0) EPOCH_FRESH=15 ;; esac
 case "$BLOCK_BUDGET" in ''|*[!0-9]*|0) BLOCK_BUDGET=3 ;; esac
@@ -83,6 +101,8 @@ done
 
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
+# shellcheck source=bin/fm-attention-lib.sh
+. "$SCRIPT_DIR/fm-attention-lib.sh"
 # shellcheck source=bin/fm-primary-scope-lib.sh
 . "$SCRIPT_DIR/fm-primary-scope-lib.sh"
 
@@ -105,10 +125,21 @@ STOP_HOOK_ACTIVE=$(printf '%s' "$PAYLOAD" | jq -r '
   else false
   end
 ' 2>/dev/null) || exit 0
-if [ "$CLAUDE_MODE" -eq 0 ] && [ "$STOP_HOOK_ACTIVE" = "true" ]; then
-  exit 0
-fi
-
+ASSISTANT_MESSAGE=$(printf '%s' "$PAYLOAD" | jq -r '
+  if has("lastAssistantMessage") then
+    if ((.lastAssistantMessage | type) == "string") then .lastAssistantMessage else error("lastAssistantMessage") end
+  elif has("last_assistant_message") then
+    if ((.last_assistant_message | type) == "string") then .last_assistant_message else error("last_assistant_message") end
+  else ""
+  end
+' 2>/dev/null) || exit 0
+# Whether this harness's Stop payload can carry the assistant reply at all. A
+# payload with the field keeps the strict receipt requirement; a payload that
+# cannot deliver it gets the bounded surfaced-once decision stop below, so an
+# evidence-less harness can never wedge on an open decision.
+ASSISTANT_EVIDENCE=$(printf '%s' "$PAYLOAD" | jq -r '
+  has("lastAssistantMessage") or has("last_assistant_message")
+' 2>/dev/null) || exit 0
 # --- scope precisely to a PRIMARY checkout ----------------------------------
 # A genuinely-marked secondmate home runs its OWN primary firstmate session, so
 # force-INCLUDE it as a guarded primary whether treehouse leased it as a linked
@@ -123,6 +154,11 @@ fi
 # so this exempts them while guarding every real secondmate home.
 fm_primary_scope_matches "$FM_ROOT" "$STATE" || exit 0
 
+if [ -n "$ASSISTANT_MESSAGE" ]; then
+  printf '%s' "$ASSISTANT_MESSAGE" | "$SCRIPT_DIR/fm-attention.sh" --record-visible >/dev/null 2>&1 || true
+fi
+fm_attention_status "$FM_HOME"
+
 # --- the actual predicate ----------------------------------------------------
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
@@ -133,21 +169,86 @@ budget_reset() {
   rm -f "$BUDGET_FILE" 2>/dev/null || true
 }
 
+# A turn must not end while a captain decision the captain has never been shown
+# is sitting open. This is the second half of the meta-blindness fix: the
+# watcher-liveness predicate below counts state/*.meta, so a primary whose only
+# live work is an unanswered decision reaches every exit path with zero in
+# flight and ends silently.
+#
+block_attention() {
+  local rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  {
+    printf '●%s\n' "$rule"
+    printf "●  TURN WOULD END WITHOUT TELLING THE CAPTAIN - %s DECISION(S) ARE WAITING ON HIM\n" \
+      "$FM_ATT_DECISIONS"
+    "$SCRIPT_DIR/fm-attention.sh" --no-mark 2>/dev/null | sed 's/^/●  /'
+    printf '●  Relay each one to the captain in plain language before ending this turn:\n'
+    printf '●  the concrete choice, why it matters now, what waiting costs, and your recommendation.\n'
+    printf '●  bin/fm-attention.sh prints exactly that, already captain-safe.\n'
+    printf '●%s\n' "$rule"
+  } >&2
+  if [ "$ASSISTANT_EVIDENCE" != true ]; then
+    [ -d "$STATE" ] && printf 'decisions=%s\n' "$FM_ATT_DECISION_DIGEST" > "$STATE/.captain-attention-decisions" 2>/dev/null || true
+  fi
+  exit 2
+}
+
+block_attention_unknown() {
+  local rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  {
+    printf '●%s\n' "$rule"
+    printf '●  TURN WOULD END WITHOUT KNOWING WHAT THE CAPTAIN NEEDS\n'
+    "$SCRIPT_DIR/fm-attention.sh" --no-mark 2>/dev/null | sed 's/^/●  /'
+    printf '●  Do not report an all-clear until the open decision and wait list can be read.\n'
+    printf '●%s\n' "$rule"
+  } >&2
+  [ -d "$STATE" ] && printf 'unknown=%s\n' "$FM_ATT_UNKNOWN_DIGEST" > "$STATE/.captain-attention-unknown" 2>/dev/null || true
+  exit 2
+}
+
+attention_gate() {
+  local seen_decisions
+  [ "$FM_ATTENTION_TURNEND_BLOCK" -eq 1 ] || return 1
+  if [ "$FM_ATT_AVAILABLE" = true ]; then
+    rm -f "$STATE/.captain-attention-unknown" 2>/dev/null || true
+    if [ "$FM_ATT_DECISIONS" -gt 0 ] && [ "$FM_ATT_DECISIONS_NEW" = true ]; then
+      [ "$ASSISTANT_EVIDENCE" = true ] && block_attention
+      seen_decisions=$(sed -n 's/^decisions=//p' "$STATE/.captain-attention-decisions" 2>/dev/null | tail -1 || true)
+      [ "$FM_ATT_DECISION_DIGEST" = "$seen_decisions" ] || block_attention
+    else
+      rm -f "$STATE/.captain-attention-decisions" 2>/dev/null || true
+    fi
+    return 0
+  fi
+  [ "${FM_ATT_UNKNOWN:-false}" = true ] || return 0
+  [ "${FM_ATT_UNKNOWN_NEW:-true}" = true ] && block_attention_unknown
+  return 0
+}
+
+allow_stop() {
+  attention_gate
+  exit 0
+}
+
+if [ "$CLAUDE_MODE" -eq 0 ] && [ "$STOP_HOOK_ACTIVE" = "true" ]; then
+  allow_stop
+fi
+
 fm_supervision_status "$STATE" "$GRACE"
 if [ "$CLAUDE_MODE" -eq 1 ]; then
   if [ "$FM_SUP_NEEDED" = false ]; then
     budget_reset
-    exit 0
+    allow_stop
   fi
 else
   if [ "$FM_SUP_IN_FLIGHT" -eq 0 ]; then
     budget_reset
-    exit 0
+    allow_stop
   fi
 fi
 if fm_watcher_healthy "$STATE" "$WATCH" "$GRACE" "$FM_HOME"; then
   budget_reset
-  exit 0
+  allow_stop
 fi
 
 block_stop() {
@@ -201,14 +302,14 @@ i=0
 while [ "$i" -lt $((SYNC_WAIT_MS / 100)) ]; do
   if autoarm_owns_recovery; then
     budget_reset
-    exit 0
+    allow_stop
   fi
   sleep 0.1
   i=$((i + 1))
 done
 if autoarm_owns_recovery; then
   budget_reset
-  exit 0
+  allow_stop
 fi
 
 # The auto-arm genuinely failed to establish: re-block, but never past the
@@ -227,6 +328,7 @@ fi
 COUNT=$((COUNT + 1))
 if [ "$COUNT" -gt "$BLOCK_BUDGET" ]; then
   budget_reset
+  attention_gate
   if [ "$FM_SUP_IN_FLIGHT" -gt 0 ]; then
     NEED_DESC="$FM_SUP_IN_FLIGHT task(s) in flight"
   else

@@ -13,6 +13,13 @@ The `hold` subcommand maps an originating work id and stable decision key to `<o
 It creates a kind `captain` backlog item when absent and invokes `tasks-axi hold <id> --reason <reason> --kind captain` on every retry.
 It rejects an identity collision, a changed title, and attempts to reopen an already resolved identity.
 
+The same subcommand requires the durable captain briefing that makes the decision answerable: an explicit semantic revision, the concrete choice, why it matters now, what waiting costs, at least one option, and a recommendation, each on one line.
+The grammar is owned by `bin/fm-attention-lib.sh` and written into the hold body, so the briefing lives and dies with the hold rather than in a side file.
+The semantic revision is a privacy-safe slug that stays stable across wording-only paraphrases and changes when the decision's substance changes.
+Supplying the complete briefing rewrites the block and preserves unrecognized body lines through the full quoted-scalar escape format; supplying none leaves an existing complete briefing untouched, so an idempotent retry cannot erase one.
+`resolve` replaces the body with the resolution record, which clears the briefing along with the hold.
+See [`captain-attention.md`](captain-attention.md) for how the result reaches the captain.
+
 The `complete` subcommand unions the reviewed keys into `decision_keys=` and appends `decisions_reviewed=1` while originating task metadata is live.
 A post-teardown visual review can complete against the surviving report and durable holds without recreating volatile task metadata.
 It accepts `--none` as an explicit semantic inventory result, not as inferred absence.

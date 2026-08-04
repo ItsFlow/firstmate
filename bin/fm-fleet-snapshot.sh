@@ -138,10 +138,18 @@ validate_positive_bound FM_SNAPSHOT_REGISTRY_TIMEOUT "$FM_SNAPSHOT_REGISTRY_TIME
 usage() {
   cat <<'EOF'
 usage: fm-fleet-snapshot.sh --json
+       fm-fleet-snapshot.sh --backlog-json
        fm-fleet-snapshot.sh --secondmate-home-summary
 
 Print a read-only structured snapshot of the firstmate fleet.
 JSON is the stable machine-readable output contract.
+
+--backlog-json emits ONLY the backlog object of the full --json contract, with
+identical record fields. It exists so cheap, frequently-run consumers
+(bin/fm-attention-lib.sh, and through it the turn-end and supervision guards)
+reuse this one backlog parser instead of re-implementing it: it makes a single
+jq pass over data/backlog.md and performs no endpoint, secondmate, report, or
+network read.
 
 --secondmate-home-summary emits the bounded structured summary used after a
 validated registered-home handoff. It is local-only, skips nested secondmate
@@ -167,6 +175,7 @@ EOF
 OUTPUT_MODE=json
 case "${1:---json}" in
   --json) ;;
+  --backlog-json) OUTPUT_MODE="backlog-json" ;;
   --secondmate-home-summary) OUTPUT_MODE=secondmate-home-summary ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
@@ -267,6 +276,16 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
       | if $v == null then null else ($v | trim) end;
     def metadata($rest; $key):
       cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + ":[[:space:]]*(?<v>[^,)]*)");
+    # Free-text metadata: a hold reason is captain-facing prose written by
+    # bin/fm-decision-hold.sh, which forbids parentheses but not commas, and
+    # tasks-axi always emits it as its own trailing "(hold: ...)" group. Reading
+    # it with the comma-terminated metadata() above silently truncated every
+    # reason at its first comma, which is how a recorded explanation reached the
+    # captain as a meaningless fragment. Free-text keys stop only at the closing
+    # parenthesis; comma-separated keys keep metadata() so "(repo: a, kind: b)"
+    # still parses.
+    def metadata_free($rest; $key):
+      cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + ":[[:space:]]*(?<v>[^)]*)");
     def metadata_word($rest; $key):
       cap($rest; ".*(?:\\(|,[[:space:]]*)" + $key + "[[:space:]]+(?<v>[^,)]*)");
     def url_pattern: "https?://[^[:space:])\"<>]+";
@@ -332,7 +351,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              repo:metadata($rest; "repo"),
              kind:metadata($rest; "kind"),
              priority:metadata($rest; "priority"),
-             hold_reason:metadata($rest; "hold"),
+             hold_reason:metadata_free($rest; "hold"),
              hold_kind:metadata($rest; "hold-kind"),
              blocked_by:cap($rest; ".*blocked-by:[[:space:]]*(?<v>[^[:space:])]+).*"),
              blocked_by_ids:blocked_by_ids($rest),
@@ -1291,6 +1310,14 @@ scout_report_lines() {
 }
 
 BACKLOG_JSON=$(backlog_json) || { echo "fm-fleet-snapshot: backlog read failed" >&2; exit 1; }
+
+# Emitted before the task snapshot so this mode stays as cheap as it advertises:
+# no endpoint reads, no secondmate aggregation, no report inventory.
+if [ "$OUTPUT_MODE" = backlog-json ]; then
+  printf '%s\n' "$BACKLOG_JSON"
+  exit 0
+fi
+
 TASKS_JSON=$(task_json_lines) || { echo "fm-fleet-snapshot: task snapshot failed" >&2; exit 1; }
 
 if [ "$OUTPUT_MODE" = secondmate-home-summary ]; then

@@ -35,14 +35,22 @@
 #                       also run only when locked.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
-#   4. context digest - data/projects.md, data/secondmates.md, data/captain.md,
+#   4. captain's call - every open captain decision and meaningful wait
+#                       (bin/fm-attention.sh), printed before the supervision
+#                       block and the context because it is this turn's second
+#                       work queue and must be seen before the first
+#                       captain-facing reply. Rendering this digest is read-only;
+#                       docs/captain-attention.md owns how an actual assistant
+#                       reply records a receipt.
+#   5. supervision    - the emitted operating block for this primary harness.
+#   6. context digest - data/projects.md, data/secondmates.md, data/captain.md,
 #                       data/captain-shared.md, data/learnings.md: read-only,
 #                       always safe, always runs.
-#   5. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#   7. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       state/.afk, and a cheap per-task endpoint-liveness read:
 #                       read-only, always runs.
-#   6. closing reminder - prints the context-specific watcher next step; this
+#   8. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
 #                       block and deliberately never arms the watcher itself.
 #
@@ -289,15 +297,18 @@ fi
 # authority, and another session may be actively draining it. It still runs
 # fm-guard.sh directly with non-mutating advisory text, so the same alarms
 # surface without repair commands.
+# The guard's own captain's-call banner is suppressed here because step 4 below
+# prints that section in full a few lines later; two copies in one digest is
+# noise, not redundancy.
 subsection "WAKE QUEUE"
 if [ "$READ_ONLY" -eq 1 ]; then
   QLEN=0
   [ -s "$STATE/.wake-queue" ] && QLEN=$(grep -c . "$STATE/.wake-queue" 2>/dev/null || printf '0')
   printf 'skipped (read-only session) - %s record(s) remain queued because this session lacks verified fleet-lock ownership.\n' "$QLEN"
-  GUARD_OUT=$(FM_GUARD_READ_ONLY=1 "$SCRIPT_DIR/fm-guard.sh" 2>&1)
+  GUARD_OUT=$(FM_GUARD_READ_ONLY=1 FM_GUARD_NO_ATTENTION=1 "$SCRIPT_DIR/fm-guard.sh" 2>&1)
   [ -n "$GUARD_OUT" ] && printf '%s\n' "$GUARD_OUT"
 else
-  DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
+  DRAIN_OUT=$(FM_GUARD_NO_ATTENTION=1 "$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
   if [ -n "$DRAIN_OUT" ]; then
     printf '%s\n' "$DRAIN_OUT"
   else
@@ -305,7 +316,19 @@ else
   fi
 fi
 
-# --- 4. supervision operating instructions ----------------------------------
+# --- 4. captain's call ---------------------------------------------------
+# Printed straight after the wake queue and before anything else, because it is
+# this turn's second work queue and must be seen before the first captain-facing
+# reply is composed. bin/fm-attention-lib.sh owns the set; this only renders it.
+subsection "CAPTAIN'S CALL"
+ATTENTION_OUT=$("$SCRIPT_DIR/fm-attention.sh" --no-mark 2>&1)
+if [ -n "$ATTENTION_OUT" ]; then
+  printf '%s\n' "$ATTENTION_OUT"
+else
+  printf '(unavailable)\n'
+fi
+
+# --- 5. supervision operating instructions ----------------------------------
 AFK_PRESENT=0
 [ -e "$STATE/.afk" ] && AFK_PRESENT=1
 X_MODE_PRESENT=0
@@ -332,7 +355,7 @@ fi
   --afk "$AFK_PRESENT" \
   --x-mode "$X_MODE_PRESENT"
 
-# --- 4. context digest -----------------------------------------------------
+# --- 6. context digest -----------------------------------------------------
 section "CONTEXT"
 print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
@@ -340,7 +363,7 @@ print_file_or_absent "$DATA/captain.md" "data/captain.md"
 print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
 print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
 
-# --- 5. fleet-state digest ---------------------------------------------
+# --- 7. fleet-state digest ---------------------------------------------
 section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
 
@@ -394,7 +417,7 @@ else
   printf 'absent\n'
 fi
 
-# --- 6. closing reminder -----------------------------------------------
+# --- 8. closing reminder -----------------------------------------------
 section "NEXT STEP"
 if [ "$READ_ONLY" -eq 1 ]; then
   cat <<'EOF'
