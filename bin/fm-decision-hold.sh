@@ -120,40 +120,48 @@ validate_complete_briefing() {
 }
 
 briefing_complete_body() {  # <encoded-body>
-  printf '%s' "$1" | node -e '
-    const fs = require("fs");
-    const body = JSON.parse(fs.readFileSync(0, "utf8"));
-    if (typeof body !== "string") process.exit(1);
-    const lines = body.split("\n");
-    const value = (label) => lines.some((line) => line.startsWith(`${label} `) && line.slice(label.length + 1).length > 0);
-    if (!lines.includes(process.argv[1])) process.exit(1);
-    if (!value(process.argv[2]) || !value(process.argv[3]) || !value(process.argv[4]) ||
-        !value(process.argv[5]) || !value(process.argv[6]) || !value(process.argv[7])) process.exit(1);
-  ' "$FM_ATTENTION_BRIEF_HEADER" "$FM_ATTENTION_BRIEF_REVISION" "$FM_ATTENTION_BRIEF_CHOICE" \
-    "$FM_ATTENTION_BRIEF_WHY" "$FM_ATTENTION_BRIEF_COST" "$FM_ATTENTION_BRIEF_OPTION" \
-    "$FM_ATTENTION_BRIEF_RECOMMEND"
+  printf '%s' "$1" | jq -se \
+    --arg header "$FM_ATTENTION_BRIEF_HEADER" \
+    --arg revision "$FM_ATTENTION_BRIEF_REVISION" \
+    --arg choice "$FM_ATTENTION_BRIEF_CHOICE" \
+    --arg why "$FM_ATTENTION_BRIEF_WHY" \
+    --arg cost "$FM_ATTENTION_BRIEF_COST" \
+    --arg option "$FM_ATTENTION_BRIEF_OPTION" \
+    --arg recommend "$FM_ATTENTION_BRIEF_RECOMMEND" '
+    if length != 1 or ((.[0] | type) != "string") then error("body") else .[0] end
+    | split("\n") as $lines
+    | def value($label):
+        any($lines[]; startswith($label + " ") and length > (($label | length) + 1));
+      ($lines | index($header)) != null
+      and value($revision) and value($choice) and value($why)
+      and value($cost) and value($option) and value($recommend)
+  ' >/dev/null 2>&1
 }
 
 write_updated_body_file() {  # <encoded-body> <replacement-prefix>
   local encoded=$1 prefix=$2 body_file
   body_file=$(mktemp "$STATE/.fm-decision-body.XXXXXX") || fail "could not create a temporary body file"
-  if ! printf '%s' "$encoded" | FM_DECISION_PREFIX="$prefix" node -e '
-    const fs = require("fs");
-    const body = JSON.parse(fs.readFileSync(0, "utf8"));
-    if (typeof body !== "string") process.exit(1);
-    const labels = process.argv.slice(2);
-    const owned = (line) =>
-      line === labels[0] ||
-      labels.slice(1).some((label) => line.startsWith(label)) ||
-      line.startsWith("Origin: ") ||
-      line.startsWith("Decision key: ") ||
-      line === "State: awaiting captain decision.";
-    const preserved = body.split("\n").filter((line) => !owned(line)).join("\n");
-    const output = process.env.FM_DECISION_PREFIX + (preserved.length > 0 ? `\n${preserved}` : "");
-    fs.writeFileSync(process.argv[1], output);
-  ' "$body_file" "$FM_ATTENTION_BRIEF_HEADER" "$FM_ATTENTION_BRIEF_REVISION" \
-    "$FM_ATTENTION_BRIEF_CHOICE" "$FM_ATTENTION_BRIEF_WHY" "$FM_ATTENTION_BRIEF_COST" \
-    "$FM_ATTENTION_BRIEF_OPTION" "$FM_ATTENTION_BRIEF_RECOMMEND"; then
+  if ! printf '%s' "$encoded" | jq -sj \
+    --arg prefix "$prefix" \
+    --arg header "$FM_ATTENTION_BRIEF_HEADER" \
+    --arg revision "$FM_ATTENTION_BRIEF_REVISION" \
+    --arg choice "$FM_ATTENTION_BRIEF_CHOICE" \
+    --arg why "$FM_ATTENTION_BRIEF_WHY" \
+    --arg cost "$FM_ATTENTION_BRIEF_COST" \
+    --arg option "$FM_ATTENTION_BRIEF_OPTION" \
+    --arg recommend "$FM_ATTENTION_BRIEF_RECOMMEND" '
+    def owned($line):
+      $line == $header
+      or ($line | startswith($revision)) or ($line | startswith($choice))
+      or ($line | startswith($why)) or ($line | startswith($cost))
+      or ($line | startswith($option)) or ($line | startswith($recommend))
+      or ($line | startswith("Origin: "))
+      or ($line | startswith("Decision key: "))
+      or $line == "State: awaiting captain decision.";
+    if length != 1 or ((.[0] | type) != "string") then error("body") else .[0] end
+    | (split("\n") | map(select(owned(.) | not)) | join("\n")) as $preserved
+    | $prefix + (if ($preserved | length) > 0 then "\n" + $preserved else "" end)
+  ' > "$body_file" 2>/dev/null; then
     rm -f "$body_file"
     fail "could not decode the existing captain decision body"
   fi
@@ -182,7 +190,7 @@ tasks_axi() {
 
 require_tasks_axi() {
   fm_tasks_axi_compatible || fail "compatible tasks-axi is required"
-  command -v node >/dev/null 2>&1 || fail "node is required"
+  command -v jq >/dev/null 2>&1 || fail "jq is required"
   tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null \
     || fail "tasks-axi does not expose the captain-hold contract"
 }

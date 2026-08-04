@@ -35,7 +35,11 @@
 # The second only runs on the paths where the first ALLOWS, so the two never
 # stack and the load-bearing watcher alarm keeps priority. Its internal render is
 # read-only; only an actual assistant reply carrying the complete alert records
-# the captain receipt.
+# the captain receipt. When the Stop payload cannot carry the assistant reply,
+# state/.captain-attention-decisions bounds the decision stop to one block per
+# changed decision set - mirroring the unknown marker - so an evidence-less
+# harness can always end its turn while the pull surfaces keep the decision
+# visible.
 #
 # Loop-guard, codex/Grok (default) mode: watcher recovery never blocks twice in the same turn.
 # Codex uses stop_hook_active and Grok uses stopHookActive; typed camel-case
@@ -129,6 +133,13 @@ ASSISTANT_MESSAGE=$(printf '%s' "$PAYLOAD" | jq -r '
   else ""
   end
 ' 2>/dev/null) || exit 0
+# Whether this harness's Stop payload can carry the assistant reply at all. A
+# payload with the field keeps the strict receipt requirement; a payload that
+# cannot deliver it gets the bounded surfaced-once decision stop below, so an
+# evidence-less harness can never wedge on an open decision.
+ASSISTANT_EVIDENCE=$(printf '%s' "$PAYLOAD" | jq -r '
+  has("lastAssistantMessage") or has("last_assistant_message")
+' 2>/dev/null) || exit 0
 # --- scope precisely to a PRIMARY checkout ----------------------------------
 # A genuinely-marked secondmate home runs its OWN primary firstmate session, so
 # force-INCLUDE it as a guarded primary whether treehouse leased it as a linked
@@ -176,6 +187,9 @@ block_attention() {
     printf '●  bin/fm-attention.sh prints exactly that, already captain-safe.\n'
     printf '●%s\n' "$rule"
   } >&2
+  if [ "$ASSISTANT_EVIDENCE" != true ]; then
+    [ -d "$STATE" ] && printf 'decisions=%s\n' "$FM_ATT_DECISION_DIGEST" > "$STATE/.captain-attention-decisions" 2>/dev/null || true
+  fi
   exit 2
 }
 
@@ -193,10 +207,17 @@ block_attention_unknown() {
 }
 
 attention_gate() {
+  local seen_decisions
   [ "$FM_ATTENTION_TURNEND_BLOCK" -eq 1 ] || return 1
   if [ "$FM_ATT_AVAILABLE" = true ]; then
     rm -f "$STATE/.captain-attention-unknown" 2>/dev/null || true
-    [ "$FM_ATT_DECISIONS" -gt 0 ] && [ "$FM_ATT_DECISIONS_NEW" = true ] && block_attention
+    if [ "$FM_ATT_DECISIONS" -gt 0 ] && [ "$FM_ATT_DECISIONS_NEW" = true ]; then
+      [ "$ASSISTANT_EVIDENCE" = true ] && block_attention
+      seen_decisions=$(sed -n 's/^decisions=//p' "$STATE/.captain-attention-decisions" 2>/dev/null | tail -1 || true)
+      [ "$FM_ATT_DECISION_DIGEST" = "$seen_decisions" ] || block_attention
+    else
+      rm -f "$STATE/.captain-attention-decisions" 2>/dev/null || true
+    fi
     return 0
   fi
   [ "${FM_ATT_UNKNOWN:-false}" = true ] || return 0

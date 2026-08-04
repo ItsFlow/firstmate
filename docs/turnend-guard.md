@@ -42,6 +42,7 @@ The supervision predicate above counts `state/*.meta`, so a primary whose only l
 The guard therefore carries a second, independent stop, checked only on the paths where the supervision predicate already allows, so the two never stack and the watcher alarm keeps priority.
 It fires when a captain decision is open that has not appeared under the correct headline and category with its complete briefing in an actual assistant reply.
 The banner's internal rendering is read-only; the turn-end adapter passes the assistant message back to `bin/fm-attention.sh --record-visible`, which is the only captain-receipt writer.
+When the Stop payload cannot carry the assistant message at all, no receipt can ever validate on that path, so the decision stop is bounded by `state/.captain-attention-decisions` - the same surfaced-once mechanism as the unknown marker: one block per changed decision set, then the turn may end while the pull surfaces keep the open decision visible.
 If the captain-attention set cannot be derived, the allow path stops once with an explicit unknown-state banner and does not record a captain receipt; after a readable derivation, a later failure is treated as a fresh unknown.
 Waits never fire it.
 `FM_ATTENTION_TURNEND_BLOCK=0` disables it without touching the supervision backstop.
@@ -60,7 +61,8 @@ Each passive adapter selects its follow-up headline from the guard's own banner,
 
 Claude and Codex can block a Stop directly with exit status 2 and stderr.
 Both payloads carry `stop_hook_active`.
-In the default Codex mode, a true value still passes through the attention gate, so a continuation cannot end without a validated captain receipt.
+In the default Codex mode, a true value still passes through the attention gate.
+A payload that carries the assistant reply keeps the strict receipt requirement there; the Claude and Codex Stop payloads carry no assistant reply, so their decision stop is the bounded surfaced-once form above rather than a receipt-cleared block.
 
 Claude runs the guard with `--claude`, which ignores `stop_hook_active` and cooperates with the Stop-owned auto-arm.
 Claude Code sets `stop_hook_active=true` on every stop after any stop-hook continuation, including `asyncRewake` rewakes, which re-opened the 2026-07-21 blind window under the default one-shot behavior.

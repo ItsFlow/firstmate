@@ -716,6 +716,28 @@ EOF
   return 0
 }
 
+# The one owner of the unknown-state result: every derivation failure inside
+# fm_attention_status reports the same unavailable set and unknown-marker
+# freshness through here, so the failure branches cannot drift apart.
+_fm_attention_mark_unknown() {  # <state-dir>
+  local state=$1 seen_unknown
+  # shellcheck disable=SC2034 # Read by callers (fm-guard.sh, fm-turnend-guard.sh, fm-attention.sh) after sourcing.
+  FM_ATT_AVAILABLE=false
+  # shellcheck disable=SC2034 # Read by callers after sourcing.
+  FM_ATT_UNKNOWN=true
+  # shellcheck disable=SC2034 # Read by callers after sourcing.
+  FM_ATT_ERROR='The open decision and wait list could not be determined.'
+  FM_ATT_JSON='{"unknown":true}'
+  FM_ATT_DIGEST=unknown
+  FM_ATT_DECISION_DIGEST=unknown
+  FM_ATT_UNKNOWN_DIGEST=$(_fm_attention_digest_of 'unknown:attention-derivation')
+  FM_ATT_NEW=true
+  FM_ATT_DECISIONS_NEW=true
+  seen_unknown=$(sed -n 's/^unknown=//p' "$state/.captain-attention-unknown" 2>/dev/null | tail -1 || true)
+  # shellcheck disable=SC2034 # Read by callers after sourcing.
+  [ "$FM_ATT_UNKNOWN_DIGEST" = "$seen_unknown" ] || FM_ATT_UNKNOWN_NEW=true
+}
+
 # fm_attention_status <fm-home>
 # Populate for the home at $1:
 #   FM_ATT_AVAILABLE       true/false - false when the complete set is unavailable
@@ -733,7 +755,7 @@ EOF
 #   FM_ATT_UNKNOWN_NEW     true when the same unknown has not been surfaced
 # Always returns 0.
 fm_attention_status() {  # <fm-home>
-  local home=$1 state seen_att seen_dec seen_unknown ids='' dec_ids='' summary
+  local home=$1 state seen_att seen_dec ids='' dec_ids='' summary
   state="${FM_STATE_OVERRIDE:-$home/state}"
   # shellcheck disable=SC2034 # Read by callers (fm-guard.sh, fm-turnend-guard.sh, fm-attention.sh) after sourcing.
   FM_ATT_AVAILABLE=true
@@ -751,17 +773,7 @@ fm_attention_status() {  # <fm-home>
   FM_ATT_UNKNOWN_NEW=false
 
   if ! command -v jq >/dev/null 2>&1 || ! FM_ATT_JSON=$(fm_attention_json "$home" 2>/dev/null) || [ -z "$FM_ATT_JSON" ]; then
-    FM_ATT_AVAILABLE=false
-    FM_ATT_UNKNOWN=true
-    FM_ATT_ERROR='The open decision and wait list could not be determined.'
-    FM_ATT_JSON='{"unknown":true}'
-    FM_ATT_DIGEST=unknown
-    FM_ATT_DECISION_DIGEST=unknown
-    FM_ATT_UNKNOWN_DIGEST=$(_fm_attention_digest_of 'unknown:attention-derivation')
-    FM_ATT_NEW=true
-    FM_ATT_DECISIONS_NEW=true
-    seen_unknown=$(sed -n 's/^unknown=//p' "$state/.captain-attention-unknown" 2>/dev/null | tail -1 || true)
-    [ "$FM_ATT_UNKNOWN_DIGEST" = "$seen_unknown" ] || FM_ATT_UNKNOWN_NEW=true
+    _fm_attention_mark_unknown "$state"
     return 0
   fi
   # One jq pass for counts and both identity lists; this runs on every guarded
@@ -791,20 +803,7 @@ fm_attention_status() {  # <fm-home>
     ids=$(printf '%s\n' "$summary" | awk '/^--attention--$/{s=1;next} /^--decisions--$/{s=0} s')
     dec_ids=$(printf '%s\n' "$summary" | awk '/^--decisions--$/{s=1;next} s')
   else
-    FM_ATT_AVAILABLE=false
-    # shellcheck disable=SC2034 # Read by callers after sourcing.
-    FM_ATT_UNKNOWN=true
-    # shellcheck disable=SC2034 # Read by callers after sourcing.
-    FM_ATT_ERROR='The open decision and wait list could not be determined.'
-    FM_ATT_JSON='{"unknown":true}'
-    FM_ATT_DIGEST=unknown
-    FM_ATT_DECISION_DIGEST=unknown
-    FM_ATT_UNKNOWN_DIGEST=$(_fm_attention_digest_of 'unknown:attention-derivation')
-    FM_ATT_NEW=true
-    FM_ATT_DECISIONS_NEW=true
-    seen_unknown=$(sed -n 's/^unknown=//p' "$state/.captain-attention-unknown" 2>/dev/null | tail -1 || true)
-    # shellcheck disable=SC2034 # Read by callers after sourcing.
-    [ "$FM_ATT_UNKNOWN_DIGEST" = "$seen_unknown" ] || FM_ATT_UNKNOWN_NEW=true
+    _fm_attention_mark_unknown "$state"
     return 0
   fi
   # shellcheck disable=SC2034 # Read by callers after sourcing.

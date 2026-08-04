@@ -68,7 +68,8 @@ A generated captain item merges with its origin and key, while a direct item mer
 When that decision is transferred to its durable captain item, the current wait remains attached until a terminal work outcome closes the wait portion.
 The marker bounds the interrupt only - an open item stays listed until it is answered or clears.
 
-The turn-end stop remains active until the complete alert appears in an actual captain-visible assistant reply.
+On a harness whose turn-end payload carries the assistant reply, the turn-end stop remains active until the complete alert appears in an actual captain-visible assistant reply.
+On a harness whose payload cannot carry the reply, no receipt can ever validate at turn end, so that stop is bounded by a separate decision marker to one interrupt per changed decision set; the open decision stays on every pull surface until it is answered.
 Routine external and timed waits never stop a turn because they need no captain action.
 An unknown derivation can also stop a turn once, using a separate unknown marker so a broken projection cannot loop the session and cannot mark a decision set as surfaced.
 Read-only calls never reset the unknown marker; an explicitly mutating turn-end or receipt path resets it after a readable derivation, so a later derivation failure is surfaced as a fresh unknown.

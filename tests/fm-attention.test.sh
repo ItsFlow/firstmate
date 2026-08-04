@@ -79,6 +79,15 @@ run_turnend_claude() {  # <home> [<stop-hook-active>] [<assistant-message>]
       FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" "$TURNEND" --claude 2>&1
 }
 
+# A Stop payload from a harness whose hook cannot deliver the assistant reply at
+# all: the evidence field is absent, not empty.
+run_turnend_no_evidence() {  # <home>
+  local home=$1
+  jq -cn '{stop_hook_active:false,session_id:"attention-test"}' \
+    | FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_STATE_OVERRIDE="$home/state" \
+      FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" "$TURNEND" 2>&1
+}
+
 record_visible() {  # <home>
   local home=$1 message
   message=$(attention "$home" --no-mark)
@@ -812,6 +821,7 @@ test_only_the_captain_renderer_writes_the_surface_marker() {
     while IFS= read -r file; do
       grep -n -- '\.captain-attention' "$file" \
         | grep -v -- '\.captain-attention-unknown' \
+        | grep -v -- '\.captain-attention-decisions' \
         | grep -E -- '(^|[[:space:]])>[[:space:]]*"?[^"]*\.captain-attention("|$)|(^|[[:space:]])(tee|mv|cp|touch|rm)[[:space:]].*\.captain-attention' >/dev/null \
         && printf '%s\n' "$file"
     done <<EOF
@@ -1112,6 +1122,44 @@ test_turn_end_requires_a_captain_visible_complete_alert() {
   pass "a turn ends only after the complete alert is actually captain-visible"
 }
 
+test_evidence_less_decision_stop_is_bounded() {
+  local home out status
+  home=$(make_primary_home turnend-no-evidence)
+  add_unsurfaced_decision "$home"
+
+  out=$(run_turnend_no_evidence "$home"); status=$?
+  expect_code 2 "$status" "an evidence-less harness must still stop once on an unsurfaced decision"
+  assert_contains "$out" 'TURN WOULD END WITHOUT TELLING THE CAPTAIN' \
+    "the evidence-less stop must show the captain banner"
+  assert_present "$home/state/.captain-attention-decisions" \
+    "the evidence-less stop must record its bounded marker"
+
+  out=$(run_turnend_no_evidence "$home"); status=$?
+  expect_code 0 "$status" "an open decision without payload evidence must be bounded to one stop"
+  [ -z "$out" ] || fail "the bounded evidence-less turn end produced output: $out"
+  assert_contains "$(attention "$home" --no-mark --status)" 'decisions_new=true' \
+    "the bounded stop must not spend the captain receipt"
+
+  add_row "$home" Queued \
+    '- [ ] second-decision-y - Pick the deploy window (repo: sample) (kind: captain) (since 2026-07-29) (hold: the deploy window needs captain input) (hold-kind: captain)
+  Captain briefing v1:
+  Semantic revision: deploy-window-v1
+  Choice: Deploy tonight or hold until the weekend window.
+  Why now: The release train departs before the next weekend window.
+  If this waits: The release misses the train and slips a full cycle.
+  Option: Deploy tonight.
+  Option: Hold for the weekend window.
+  Recommended: Deploy tonight so the release makes the train.'
+  out=$(run_turnend_no_evidence "$home"); status=$?
+  expect_code 2 "$status" "a changed decision set must re-arm the bounded stop"
+  out=$(run_turnend_no_evidence "$home"); status=$?
+  expect_code 0 "$status" "the re-armed stop must stay bounded to one block"
+
+  out=$(run_turnend "$home"); status=$?
+  expect_code 2 "$status" "a payload that carries the assistant reply must keep the strict receipt requirement"
+  pass "an evidence-less harness gets one bounded decision stop per changed set"
+}
+
 test_claude_autoarm_allow_paths_still_stop_for_unsurfaced_decisions() {
   local home out status
 
@@ -1240,6 +1288,7 @@ test_briefing_revisions_preserve_body_and_reopen_receipt_semantically
 test_receipt_validation_keeps_each_alert_facts_with_its_headline
 test_unaccounted_primary_work_is_not_idle
 test_turn_end_requires_a_captain_visible_complete_alert
+test_evidence_less_decision_stop_is_bounded
 test_claude_autoarm_allow_paths_still_stop_for_unsurfaced_decisions
 test_declared_waits_never_stop_a_turn
 test_captain_view_carries_no_internal_vocabulary
