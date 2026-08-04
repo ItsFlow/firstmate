@@ -203,7 +203,7 @@ The captain-facing behavior and the primary-activity blind spot are covered dete
 bash tests/fm-attention.test.sh
 ```
 
-The suite covers complete briefing creation, full escape preservation, semantic receipt revisions, combined keyed alerts, read-only marker behavior, actual assistant-delivery receipts, wait timing, resolution, readable linked state, dangling-link unknown states, and the primary-activity blind spot.
+The suite covers complete briefing creation, full escape preservation, semantic receipt revisions, combined keyed alerts, read-only marker behavior, actual assistant-delivery receipts, the bounded surfaced-once decision stop on an evidence-less Stop payload, wait timing, resolution, readable linked state, dangling-link unknown states, and the primary-activity blind spot.
 
 Current entry points:
 

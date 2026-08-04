@@ -109,6 +109,7 @@ state/               volatile runtime signals; gitignored
   .wake-queue        durable queued wakes: epoch<TAB>seq<TAB>kind<TAB>key<TAB>payload
   .afk               durable away-mode flag; present = sub-supervisor may inject escalations (set by /afk, cleared on user return)
   .captain-attention digest of the open decision/wait set most recently verified in an actual assistant reply; bounds the interrupt, never the ledger (bin/fm-attention-lib.sh)
+  .captain-attention-decisions .captain-attention-unknown   turn-end surfaced-once bounds for the evidence-less decision stop and an unknown derivation (bin/fm-turnend-guard.sh); never touch
   .watch.lock .wake-queue.lock watcher singleton and queue serialization locks
   .claude-autoarm.lock .claude-autoarm-epoch .turnend-claude-blocks   Claude Stop auto-arm single-flight, epoch, and guard-budget records; never touch
   .hash-* .count-* .stale-* .stale-since-* .paused-* .wedge-escalations-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak   watcher internals; never touch

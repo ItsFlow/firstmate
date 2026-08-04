@@ -62,6 +62,10 @@
       "target": "docs/calm.md"
     },
     {
+      "source": "docs/captain-attention.md",
+      "target": "docs/verification/supervision.md"
+    },
+    {
       "source": "docs/sessionstart-nudge.md",
       "target": "docs/verification/supervision.md"
     },

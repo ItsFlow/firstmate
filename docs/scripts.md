@@ -17,6 +17,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-tasklist-view.sh`    | Render the fleet snapshot as a live read-only task-list board                        |
 | `fm-bearings-snapshot.sh` | Project the fleet snapshot to the compact TOON bearings view; local-only unless `--include-prs` |
 | `fm-attention.sh`        | Print every open captain decision and meaningful wait in captain-safe plain language |
+| `fm-attention-lib.sh`    | Shared single owner of the captain-attention derivation, identities, briefings, and receipts (docs/captain-attention.md) |
 | `fm-inbox-view.sh`       | Generate the read-only captain decision-and-review board HTML                        |
 | `fm-inbox-render.py`     | Render the inbox-board HTML from snapshot, card, full-text, and PR-state inputs      |
 | `fm-inbox-arm.sh`        | Write and register the captain-inbox answer relay                                    |
