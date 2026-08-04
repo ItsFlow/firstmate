@@ -222,7 +222,7 @@ _fm_attention_generation_set() {  # <generation-set> <key> <generation>
 # origin_open_decisions skips them.
 fm_attention_status_rows() {  # <state-dir>
   local state=$1 meta_paths meta meta_text meta_line id status kind kind_seen last verb key note n next line stripped pause resolve held
-  local decisions waits decision_gens wait_gens existing gen dverb dnote dn dwgen dwait wverb wgen wn wnote decision_next status_text
+  local decisions waits decision_gens wait_gens existing gen dverb dnote dn dwgen dwait wgen wn wnote decision_next status_text
   pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
@@ -290,7 +290,7 @@ EOF
         fi
         existing=$(_fm_attention_row_for_key "$waits" "$key" || true)
         if [ -n "$existing" ]; then
-          IFS=$'\t' read -r _ wverb wgen wn wnote <<EOF
+          IFS=$'\t' read -r _ _ wgen wn wnote <<EOF
 $existing
 EOF
           dn=$wn
@@ -360,7 +360,7 @@ EOF
           fi
           existing=$(_fm_attention_row_for_key "$waits" "$key" || true)
           if [ -n "$existing" ]; then
-            IFS=$'\t' read -r _ wverb gen n wnote <<EOF
+            IFS=$'\t' read -r _ _ gen n wnote <<EOF
 $existing
 EOF
             n=$((n + 1))
@@ -725,8 +725,6 @@ _fm_attention_mark_unknown() {  # <state-dir>
   FM_ATT_AVAILABLE=false
   # shellcheck disable=SC2034 # Read by callers after sourcing.
   FM_ATT_UNKNOWN=true
-  # shellcheck disable=SC2034 # Read by callers after sourcing.
-  FM_ATT_ERROR='The open decision and wait list could not be determined.'
   FM_ATT_JSON='{"unknown":true}'
   FM_ATT_DIGEST=unknown
   FM_ATT_DECISION_DIGEST=unknown
@@ -742,7 +740,6 @@ _fm_attention_mark_unknown() {  # <state-dir>
 # Populate for the home at $1:
 #   FM_ATT_AVAILABLE       true/false - false when the complete set is unavailable
 #   FM_ATT_UNKNOWN         true/false - true when the complete set is unknowable
-#   FM_ATT_ERROR           human-readable unknown-state reason
 #   FM_ATT_JSON            the record array
 #   FM_ATT_COUNT           total open records
 #   FM_ATT_DECISIONS       open records needing the captain
@@ -759,8 +756,8 @@ fm_attention_status() {  # <fm-home>
   state="${FM_STATE_OVERRIDE:-$home/state}"
   # shellcheck disable=SC2034 # Read by callers (fm-guard.sh, fm-turnend-guard.sh, fm-attention.sh) after sourcing.
   FM_ATT_AVAILABLE=true
+  # shellcheck disable=SC2034 # Read by callers (fm-guard.sh, fm-turnend-guard.sh) after sourcing.
   FM_ATT_UNKNOWN=false
-  FM_ATT_ERROR=''
   FM_ATT_JSON='[]'
   FM_ATT_COUNT=0
   FM_ATT_DECISIONS=0
@@ -770,6 +767,7 @@ fm_attention_status() {  # <fm-home>
   FM_ATT_UNKNOWN_DIGEST=empty
   FM_ATT_NEW=false
   FM_ATT_DECISIONS_NEW=false
+  # shellcheck disable=SC2034 # Read by callers (fm-turnend-guard.sh) after sourcing.
   FM_ATT_UNKNOWN_NEW=false
 
   if ! command -v jq >/dev/null 2>&1 || ! FM_ATT_JSON=$(fm_attention_json "$home" 2>/dev/null) || [ -z "$FM_ATT_JSON" ]; then

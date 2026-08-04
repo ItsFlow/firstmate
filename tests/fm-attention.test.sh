@@ -359,6 +359,7 @@ test_failed_state_collection_is_unknown_not_empty() {
   printf 'paused: waiting for a readable source\n' > "$home/state/task-board.status"
   fake_bin="$home/bin/failing-cat"
   mkdir -p "$fake_bin"
+  # shellcheck disable=SC2016 # Literal program text for the generated fake cat; $1/$@ must not expand here.
   printf '#!/usr/bin/env bash\ncase "$1" in *.status) exit 42 ;; esac\nexec /bin/cat "$@"\n' > "$fake_bin/cat"
   chmod +x "$fake_bin/cat"
 
@@ -369,6 +370,7 @@ test_failed_state_collection_is_unknown_not_empty() {
 
   metadata_bin="$home/bin/failing-metadata-cat"
   mkdir -p "$metadata_bin"
+  # shellcheck disable=SC2016 # Literal program text for the generated fake cat; $1/$@ must not expand here.
   printf '#!/usr/bin/env bash\ncase "$1" in *.meta) exit 42 ;; esac\nexec /bin/cat "$@"\n' > "$metadata_bin/cat"
   chmod +x "$metadata_bin/cat"
   PATH="$metadata_bin:$PATH" bash -c '. "$1"; fm_attention_status_rows "$2"' \
